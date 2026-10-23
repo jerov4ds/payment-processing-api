@@ -18,6 +18,7 @@ import {
 } from "./middleware/shutdown-gate";
 import type { AppLogger } from "./ports/logger";
 import type { PaymentRepository } from "./repositories/payment-repository";
+import { consoleRouter } from "./routes/console";
 import { docsRouter } from "./routes/docs";
 import { healthRouter } from "./routes/health";
 import { paymentRouter } from "./routes/payments";
@@ -68,6 +69,7 @@ export function createApp(deps: AppDependencies): Express {
   app.use("/health", healthRouter(deps.repository, deps.readiness));
   app.use("/api", apiKeyAuth(deps.env.apiClients));
   app.use("/api/v1", paymentRouter(deps.paymentService));
+  app.use(consoleRouter());
   app.use(docsRouter(buildOpenApiSpec()));
   app.use((req, res) => {
     const problem = toProblem(new RouteNotFoundError(req.method, req.path), {

@@ -73,7 +73,7 @@ npm install
 npm run dev
 ```
 
-The dev server listens on `http://127.0.0.1:4317`. Interactive docs are at `/docs`. The OpenAPI document is at `/openapi.json`.
+The dev server listens on `http://127.0.0.1:4317`. Open `/` for the payment desk. Interactive docs are at `/docs`. The OpenAPI document is at `/openapi.json`. The desk talks to this same server and prefills the local demo API key.
 
 JSON mode needs the parent directory of `JSON_STORE_PATH` to exist. A missing file is created empty. A file that is not valid JSON, or that fails the store schema, aborts startup and is left unchanged.
 
