@@ -86,7 +86,7 @@ describe("payment service", () => {
     expect(replay.replay).toBe(true);
     expect(replay.body.status).toBe("PENDING");
     expect(queue.jobs).toHaveLength(1);
-    expect((await service.get(PAYMENT_ID)).status).toBe("SUCCEEDED");
+    expect((await service.get(PAYMENT_ID, "demo")).status).toBe("SUCCEEDED");
   });
 
   it("rejects the same key with a different body and still returns 202 if enqueue fails", async () => {
@@ -122,6 +122,7 @@ describe("payment service", () => {
     const cancelled = await service.transition(
       PAYMENT_ID,
       { status: "CANCELLED", reason: "changed mind" },
+      "demo",
       1,
     );
     expect(cancelled).toMatchObject({
@@ -144,15 +145,17 @@ describe("payment service", () => {
         current.version,
       );
     });
-    const refunded = await service.transition(second.paymentId, {
-      status: "REFUNDED",
-    });
+    const refunded = await service.transition(
+      second.paymentId,
+      { status: "REFUNDED" },
+      "demo",
+    );
     expect(refunded.status).toBe("REFUNDED");
     await expect(
-      service.transition(PAYMENT_ID, { status: "REFUNDED" }),
+      service.transition(PAYMENT_ID, { status: "REFUNDED" }, "demo"),
     ).rejects.toBeInstanceOf(InvalidTransitionError);
     await expect(
-      service.transition(second.paymentId, { status: "REFUNDED" }, 1),
+      service.transition(second.paymentId, { status: "REFUNDED" }, "demo", 1),
     ).rejects.toBeInstanceOf(VersionConflictError);
   });
 
@@ -166,6 +169,7 @@ describe("payment service", () => {
       responseStatus: 202,
       responseBody: {
         id: PAYMENT_ID,
+        clientId: "demo",
         amount: input.amount,
         currency: "NGN",
         status: "PENDING",
@@ -235,6 +239,7 @@ describe("payment service", () => {
       responseStatus: 202,
       responseBody: {
         id: PAYMENT_ID,
+        clientId: "demo",
         amount: input.amount,
         currency: "NGN",
         status: "PENDING",
@@ -277,12 +282,38 @@ describe("payment service", () => {
 
   it("returns not found for a missing payment", async () => {
     const { service } = build();
-    await expect(service.get(PAYMENT_ID)).rejects.toBeInstanceOf(
+    await expect(service.get(PAYMENT_ID, "demo")).rejects.toBeInstanceOf(
       PaymentNotFoundError,
     );
     await expect(
-      service.transition(PAYMENT_ID, { status: "CANCELLED" }),
+      service.transition(PAYMENT_ID, { status: "CANCELLED" }, "demo"),
     ).rejects.toBeInstanceOf(PaymentNotFoundError);
+  });
+
+  it("hides a payment from every other client", async () => {
+    const { service } = build();
+    const created = await service.create(input, {
+      clientId: "demo",
+      idempotencyKey: "order-1042-key",
+    });
+    await expect(
+      service.get(created.paymentId, "merchant"),
+    ).rejects.toBeInstanceOf(PaymentNotFoundError);
+    await expect(
+      service.transition(
+        created.paymentId,
+        { status: "CANCELLED" },
+        "merchant",
+      ),
+    ).rejects.toBeInstanceOf(PaymentNotFoundError);
+    const foreign = await service.list({
+      clientId: "merchant",
+      limit: 10,
+      offset: 0,
+    });
+    expect(foreign.total).toBe(0);
+    const own = await service.get(created.paymentId, "demo");
+    expect(own.status).toBe("PENDING");
   });
 
   it("lists payments by status", async () => {
@@ -292,6 +323,7 @@ describe("payment service", () => {
       idempotencyKey: "order-1042-key",
     });
     const page = await service.list({
+      clientId: "demo",
       status: "PENDING",
       limit: 10,
       offset: 0,

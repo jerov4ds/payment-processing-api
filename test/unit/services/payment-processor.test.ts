@@ -154,7 +154,11 @@ describe("payment processor", () => {
 
   it("ignores a job whose payment is already terminal or missing", async () => {
     const context = await seed();
-    await context.service.transition(PAYMENT_ID, { status: "CANCELLED" });
+    await context.service.transition(
+      PAYMENT_ID,
+      { status: "CANCELLED" },
+      "demo",
+    );
     const gateway = context.gateway as ScriptedGateway;
     await context.processor.process(PAYMENT_ID);
     await context.processor.process("3fa85f64-5717-4562-b3fc-2c963f66af99");

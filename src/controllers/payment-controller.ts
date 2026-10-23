@@ -38,16 +38,16 @@ export function createPaymentController(service: PaymentService) {
     },
 
     async get(req: Request, res: Response): Promise<void> {
-      requireClient(req);
+      const clientId = requireClient(req);
       const id = parseSchema(z.string().uuid(), routeParam(req.params.id));
-      const payment = await service.get(id);
+      const payment = await service.get(id, clientId);
       res.status(200).json(payment);
     },
 
     async list(req: Request, res: Response): Promise<void> {
-      requireClient(req);
+      const clientId = requireClient(req);
       const query = parseSchema(listPaymentsQuerySchema, req.query);
-      const page = await service.list(query);
+      const page = await service.list({ ...query, clientId });
       res.status(200).json({
         data: page.items,
         page: {
@@ -59,10 +59,15 @@ export function createPaymentController(service: PaymentService) {
     },
 
     async updateStatus(req: Request, res: Response): Promise<void> {
-      requireClient(req);
+      const clientId = requireClient(req);
       const id = parseSchema(z.string().uuid(), routeParam(req.params.id));
       const body = parseSchema(updateStatusSchema, req.body);
-      const payment = await service.transition(id, body, readIfMatch(req));
+      const payment = await service.transition(
+        id,
+        body,
+        clientId,
+        readIfMatch(req),
+      );
       res.status(200).json(payment);
     },
   };

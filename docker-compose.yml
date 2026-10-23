@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: payments
       POSTGRES_DB: payments
     ports:
-      - "54329:5432"
+      - "127.0.0.1:54329:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U payments -d payments"]
       interval: 2s
@@ -31,7 +31,7 @@ services:
       GATEWAY_PERMANENT_FAILURE_RATE: 0
       GATEWAY_SEED: 1
     ports:
-      - "4317:4317"
+      - "127.0.0.1:4317:4317"
     depends_on:
       postgres:
         condition: service_healthy

@@ -24,6 +24,7 @@ import type {
 
 interface PaymentRow extends QueryResultRow {
   id: string;
+  api_client_id: string;
   amount: string | number;
   currency: string;
   status: string;
@@ -88,15 +89,18 @@ export class PostgresPaymentRepository implements PaymentRepository {
       return;
     }
     try {
+      if (payment.clientId !== idempotency.clientId) {
+        throw new Error("Payment client does not match the idempotency record");
+      }
       await this.client.query(
         `INSERT INTO payments (
-           id, amount, currency, status, description, metadata, idempotency_key,
-           payment_method, status_reason, failure_reason, attempts, version,
-           processing_started_at, created_at, updated_at
+           id, api_client_id, amount, currency, status, description, metadata,
+           idempotency_key, payment_method, status_reason, failure_reason,
+           attempts, version, processing_started_at, created_at, updated_at
          ) VALUES (
-           $1, $2, $3, $4, $5, $6::jsonb, $7,
-           $8::jsonb, $9, $10, $11, $12,
-           $13, $14, $15
+           $1, $2, $3, $4, $5, $6, $7::jsonb,
+           $8, $9::jsonb, $10, $11,
+           $12, $13, $14, $15, $16
          )`,
         paymentParams(payment),
       );
@@ -173,7 +177,7 @@ export class PostgresPaymentRepository implements PaymentRepository {
          version = $11,
          processing_started_at = $12,
          updated_at = $13
-       WHERE id = $14 AND version = $15
+       WHERE id = $14 AND version = $15 AND api_client_id = $16
        RETURNING *`,
       [
         payment.amount,
@@ -193,6 +197,7 @@ export class PostgresPaymentRepository implements PaymentRepository {
         new Date(payment.updatedAt),
         payment.id,
         expectedVersion,
+        payment.clientId,
       ],
     );
     const row = result.rows[0];
@@ -203,6 +208,9 @@ export class PostgresPaymentRepository implements PaymentRepository {
     if (!existing) {
       throw new Error(`Payment id was not found: ${payment.id}`);
     }
+    if (existing.clientId !== payment.clientId) {
+      throw new Error("Payment client cannot change");
+    }
     throw new VersionConflictError();
   }
 
@@ -210,15 +218,17 @@ export class PostgresPaymentRepository implements PaymentRepository {
     const status = query.status ?? null;
     const rows = await this.query<PaymentRow>(
       `SELECT * FROM payments
-       WHERE ($1::text IS NULL OR status = $1)
+       WHERE api_client_id = $1
+         AND ($2::text IS NULL OR status = $2)
        ORDER BY created_at DESC, id ASC
-       LIMIT $2 OFFSET $3`,
-      [status, query.limit, query.offset],
+       LIMIT $3 OFFSET $4`,
+      [query.clientId, status, query.limit, query.offset],
     );
     const count = await this.query<{ total: string | number }>(
       `SELECT COUNT(*)::int AS total FROM payments
-       WHERE ($1::text IS NULL OR status = $1)`,
-      [status],
+       WHERE api_client_id = $1
+         AND ($2::text IS NULL OR status = $2)`,
+      [query.clientId, status],
     );
     const totalValue = count.rows[0]?.total ?? 0;
     return {
@@ -264,6 +274,7 @@ export class PostgresPaymentRepository implements PaymentRepository {
 function paymentParams(payment: Payment): unknown[] {
   return [
     payment.id,
+    payment.clientId,
     payment.amount,
     payment.currency,
     payment.status,
@@ -312,6 +323,7 @@ function mapRequiredPayment(row: PaymentRow): Payment {
   }
   return {
     id: row.id,
+    clientId: row.api_client_id,
     amount,
     currency: row.currency as Payment["currency"],
     status: row.status as PaymentStatus,

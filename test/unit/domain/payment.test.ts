@@ -9,6 +9,7 @@ import { NOW, PAYMENT_ID } from "../../helpers/fixtures";
 
 const base = {
   id: PAYMENT_ID,
+  clientId: "demo",
   amount: 150000,
   currency: "NGN",
   idempotencyKey: "order-1042-key",
@@ -60,6 +61,9 @@ describe("payment aggregate", () => {
     expect(() =>
       createPayment({ ...base, paymentMethod: { type: "card", token: "no" } }),
     ).toThrow(/token/);
+    expect(() => createPayment({ ...base, clientId: "bad id" })).toThrow(
+      /Invalid API client/,
+    );
     expect(() =>
       createPayment({
         ...base,

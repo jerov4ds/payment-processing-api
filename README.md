@@ -73,7 +73,7 @@ npm install
 npm run dev
 ```
 
-The dev server listens on `http://127.0.0.1:4317`. Open `/` for the payment desk. Interactive docs are at `/docs`. The OpenAPI document is at `/openapi.json`. The desk talks to this same server and prefills the local demo API key.
+The dev server listens on `http://127.0.0.1:4317`. Open `/` for the payment desk. Interactive docs are at `/docs`. The OpenAPI document is at `/openapi.json`. Paste the API key secret into the desk. The page does not include one.
 
 JSON mode needs the parent directory of `JSON_STORE_PATH` to exist. A missing file is created empty. A file that is not valid JSON, or that fails the store schema, aborts startup and is left unchanged.
 
@@ -85,7 +85,7 @@ PostgreSQL mode:
 docker compose up --build
 ```
 
-The API is published on port `4317` and Postgres on host port `54329`. Compose uses the demo API key `demo:dev-api-key-change-me`.
+The API is published on `127.0.0.1:4317` and Postgres on `127.0.0.1:54329`. Compose uses the local demo API key `demo:dev-api-key-change-me`. Replace that key before exposing the port beyond your machine.
 
 ### Scripts
 
@@ -103,8 +103,8 @@ The API is published on port `4317` and Postgres on host port `54329`. Compose u
 
 | Variable                         | Default                                  | Purpose                                                                          |
 | -------------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------- |
-| `NODE_ENV`                       | `development`                            | `development` includes error stacks in problem details                           |
-| `HOST`                           | `0.0.0.0`                                | Bind address                                                                     |
+| `NODE_ENV`                       | `development`                            | Runtime mode. Problem responses never include stacks                             |
+| `HOST`                           | `127.0.0.1`                              | Bind address. Compose sets `0.0.0.0` inside the container                        |
 | `PORT`                           | `4317`                                   | Listen port                                                                      |
 | `LOG_LEVEL`                      | `info`                                   | Pino level                                                                       |
 | `API_KEYS`                       | required                                 | Comma-separated `clientId:secret` pairs. Secrets must be at least 8 characters   |
@@ -135,14 +135,16 @@ Invalid configuration throws at startup and the process exits before it listens.
 
 ## API
 
-Send `X-Api-Key` on `/api/v1/*`. Health, `/docs`, and `/openapi.json` are public. Errors use `application/problem+json` with a stable `code`, the request id, and no stack outside `NODE_ENV=development`.
+Send `X-Api-Key` on `/api/v1/*`. Health, `/docs`, and `/openapi.json` are public. Errors use `application/problem+json` with a stable `code` and the request id. Stacks stay in the server log.
+
+A payment belongs to the client id of the key that created it. `GET`, list, and `PATCH` for another client return `404`. The worker still settles every client's payments.
 
 | Status | `code`                    | When                                                       |
 | ------ | ------------------------- | ---------------------------------------------------------- |
 | 400    | `VALIDATION_ERROR`        | Schema failure, including a non-UUID id                    |
 | 400    | `MISSING_IDEMPOTENCY_KEY` | `POST` without the header                                  |
 | 401    | `UNAUTHORIZED`            | Missing or unknown API key                                 |
-| 404    | `PAYMENT_NOT_FOUND`       | Unknown UUID                                               |
+| 404    | `PAYMENT_NOT_FOUND`       | Unknown UUID, or a payment owned by another client         |
 | 404    | `ROUTE_NOT_FOUND`         | Unknown path                                               |
 | 409    | `INVALID_TRANSITION`      | Client status is legal and the current state forbids it    |
 | 409    | `VERSION_CONFLICT`        | Stale `If-Match` or lost update                            |
@@ -228,7 +230,7 @@ Coverage includes the state machine, idempotency, optimistic locking, gateway ti
 - Unknown fields are stripped before the idempotency hash is computed, so a retry that drops an ignored field still matches. A typo in a field name is therefore ignored rather than rejected.
 - Metadata is at most 20 keys, each matching `^[A-Za-z0-9_.-]{1,64}$`, with string, integer, or boolean values. `__proto__`, `constructor`, and `prototype` are rejected.
 - Rate limiting is in memory, keyed by a hash of the API key. Health probes are exempt. A second instance needs a shared store.
-- Pino redacts `x-api-key`, `authorization`, payment-method tokens, and PAN/CVV field names.
+- Pino redacts `x-api-key`, `authorization`, `idempotency-key`, payment-method tokens, and PAN/CVV field names. Unexpected failures are logged with the error and are not copied into the HTTP body.
 - `npm audit --audit-level=high` is part of CI.
 
 ## Persistence

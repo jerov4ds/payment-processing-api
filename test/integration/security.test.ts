@@ -82,6 +82,37 @@ describe("HTTP security edge", () => {
     expect(health.status).toBe(200);
   });
 
+  it("hides another client's payments", async () => {
+    const { app, apiKey } = await createTestApp();
+    const created = await request(app)
+      .post("/api/v1/payments")
+      .set("X-Api-Key", apiKey)
+      .set("Idempotency-Key", "owner-order-key")
+      .send(body);
+    expect(created.status).toBe(202);
+    const id = created.body.id as string;
+    const read = await request(app)
+      .get(`/api/v1/payments/${id}`)
+      .set("X-Api-Key", "merchant-key");
+    expect(read.status).toBe(404);
+    expect(read.body.code).toBe("PAYMENT_NOT_FOUND");
+    const list = await request(app)
+      .get("/api/v1/payments")
+      .set("X-Api-Key", "merchant-key");
+    expect(list.status).toBe(200);
+    expect(list.body.page.total).toBe(0);
+    const cancel = await request(app)
+      .patch(`/api/v1/payments/${id}/status`)
+      .set("X-Api-Key", "merchant-key")
+      .send({ status: "CANCELLED" });
+    expect(cancel.status).toBe(404);
+    const owner = await request(app)
+      .get(`/api/v1/payments/${id}`)
+      .set("X-Api-Key", apiKey);
+    expect(owner.status).toBe(200);
+    expect(owner.body.clientId).toBe("demo");
+  });
+
   it("hides internal error details outside development", async () => {
     class BoomRepository extends MemoryPaymentRepository {
       override async findById(): Promise<null> {
@@ -98,6 +129,17 @@ describe("HTTP security edge", () => {
     expect(response.body.code).toBe("INTERNAL_ERROR");
     expect(JSON.stringify(response.body)).not.toContain("secret");
     expect(response.body.stack).toBeUndefined();
+
+    const development = await createTestApp({
+      env: { NODE_ENV: "development" },
+      repository: new BoomRepository(),
+    });
+    const exposed = await request(development.app)
+      .get("/api/v1/payments/3fa85f64-5717-4562-b3fc-2c963f66afa6")
+      .set("X-Api-Key", development.apiKey);
+    expect(exposed.status).toBe(500);
+    expect(JSON.stringify(exposed.body)).not.toContain("secret");
+    expect(exposed.body.stack).toBeUndefined();
   });
 
   it("serves a 404 problem for an unknown route", async () => {

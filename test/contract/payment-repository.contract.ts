@@ -147,7 +147,12 @@ export function paymentRepositoryContract(
           await tx.insert(payment, idempotencyFor(payment));
         });
       }
-      const page = await repo.list({ status: "PENDING", limit: 1, offset: 0 });
+      const page = await repo.list({
+        clientId: "demo",
+        status: "PENDING",
+        limit: 1,
+        offset: 0,
+      });
       expect(page.total).toBe(2);
       expect(page.items.map((payment) => payment.id)).toEqual([PAYMENT_ID]);
       const recoverable = await repo.listRecoverable(
@@ -156,6 +161,29 @@ export function paymentRepositoryContract(
       );
       const ids = recoverable.map((payment) => payment.id).sort();
       expect(ids).toEqual([OTHER_PAYMENT_ID, PAYMENT_ID, stale.id].sort());
+      const foreign = samplePayment({
+        id: "3fa85f64-5717-4562-b3fc-2c963f66afab",
+        clientId: "merchant",
+        status: "PENDING",
+        idempotencyKey: "merchant-key",
+      });
+      await repo.withTransaction(async (tx) => {
+        await tx.insert(foreign, idempotencyFor(foreign));
+      });
+      const hidden = await repo.list({
+        clientId: "merchant",
+        status: "PENDING",
+        limit: 10,
+        offset: 0,
+      });
+      expect(hidden.items.map((payment) => payment.id)).toEqual([foreign.id]);
+      const stillDemo = await repo.list({
+        clientId: "demo",
+        status: "PENDING",
+        limit: 10,
+        offset: 0,
+      });
+      expect(stillDemo.total).toBe(2);
     });
 
     it("answers ping", async () => {
@@ -169,7 +197,7 @@ function idempotencyFor(
   requestHash = "hash-1",
 ): IdempotencyRecord {
   return {
-    clientId: "demo",
+    clientId: payment.clientId,
     key: payment.idempotencyKey,
     requestHash,
     paymentId: payment.id,

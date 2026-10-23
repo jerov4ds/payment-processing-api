@@ -12,5 +12,10 @@ describe("payment desk", () => {
     expect(response.text).toContain('id="charge-form"');
     expect(response.text).toContain("/api/v1/payments");
     expect(response.text).not.toContain("test-key-1");
+    expect(response.text).not.toContain("dev-api-key-change-me");
+    expect(response.headers["x-frame-options"]).toBe("DENY");
+    expect(response.headers["content-security-policy"]).toContain(
+      "frame-ancestors 'none'",
+    );
   });
 });

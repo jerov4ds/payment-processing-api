@@ -59,6 +59,7 @@ export const updateStatusSchema = z
 export const publicPaymentSchema = z
   .object({
     id: z.string().uuid(),
+    clientId: z.string(),
     amount: z.number().int(),
     currency: z.enum(CURRENCIES),
     status: z.enum(PAYMENT_STATUSES),

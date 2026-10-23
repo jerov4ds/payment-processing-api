@@ -8,6 +8,7 @@ describe("loadEnv", () => {
   it("applies defaults and hashes API secrets", () => {
     const env = loadEnv(valid);
     expect(env.port).toBe(4317);
+    expect(env.host).toBe("127.0.0.1");
     expect(env.repositoryDriver).toBe("json");
     expect(env.gatewayTransientFailureRate).toBe(0);
     expect(env.apiClients).toHaveLength(1);

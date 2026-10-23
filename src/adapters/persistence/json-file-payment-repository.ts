@@ -40,6 +40,7 @@ const metadataSchema = z.record(
 
 const paymentSchema = z.object({
   id: z.string().uuid(),
+  clientId: z.string().min(1),
   amount: z.number().int().positive(),
   currency: z.enum(CURRENCIES),
   status: z.enum(PAYMENT_STATUSES),
@@ -123,6 +124,7 @@ export class JsonFilePaymentRepository implements PaymentRepository {
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw) as unknown;
+      repairClientIds(parsed);
     } catch (error) {
       this.logger.error(
         { path: this.filePath, err: error },
@@ -250,6 +252,60 @@ export class JsonFilePaymentRepository implements PaymentRepository {
   private async persist(): Promise<void> {
     const body = `${JSON.stringify(this.document, null, 2)}\n`;
     await atomicWriteFile(this.filePath, body);
+  }
+}
+
+function repairClientIds(parsed: unknown): void {
+  if (typeof parsed !== "object" || parsed === null) {
+    return;
+  }
+  const document = parsed as {
+    payments?: unknown;
+    idempotencyKeys?: unknown;
+  };
+  const payments = Array.isArray(document.payments) ? document.payments : [];
+  const keys = Array.isArray(document.idempotencyKeys)
+    ? document.idempotencyKeys
+    : [];
+  const ownerByPayment = new Map<string, string>();
+  for (const key of keys) {
+    if (typeof key !== "object" || key === null) {
+      continue;
+    }
+    const record = key as {
+      clientId?: unknown;
+      paymentId?: unknown;
+      responseBody?: unknown;
+    };
+    if (
+      typeof record.clientId !== "string" ||
+      typeof record.paymentId !== "string"
+    ) {
+      continue;
+    }
+    ownerByPayment.set(record.paymentId, record.clientId);
+    if (
+      typeof record.responseBody === "object" &&
+      record.responseBody !== null
+    ) {
+      const body = record.responseBody as { clientId?: unknown };
+      if (typeof body.clientId !== "string") {
+        body.clientId = record.clientId;
+      }
+    }
+  }
+  for (const payment of payments) {
+    if (typeof payment !== "object" || payment === null) {
+      continue;
+    }
+    const row = payment as { id?: unknown; clientId?: unknown };
+    if (typeof row.clientId === "string" || typeof row.id !== "string") {
+      continue;
+    }
+    const owner = ownerByPayment.get(row.id);
+    if (owner) {
+      row.clientId = owner;
+    }
   }
 }
 

@@ -8,6 +8,7 @@ import { RouteNotFoundError } from "./domain/errors";
 import { toProblem } from "./http/problem";
 import { buildOpenApiSpec } from "./openapi/spec";
 import { apiKeyAuth } from "./middleware/auth";
+import { denyFraming } from "./middleware/frame-guard";
 import { errorHandler } from "./middleware/error-handler";
 import { createRateLimiter } from "./middleware/rate-limit";
 import { requestId } from "./middleware/request-id";
@@ -49,8 +50,9 @@ export function createApp(deps: AppDependencies): Express {
     }),
   );
   app.use(rejectWhenShuttingDown(deps.readiness));
-  app.use("/api", helmet());
-  app.use("/health", helmet());
+  app.use("/api", helmet({ frameguard: { action: "deny" } }));
+  app.use("/health", helmet({ frameguard: { action: "deny" } }));
+  app.use(denyFraming);
   app.use(
     cors({
       origin(origin, callback) {
@@ -76,10 +78,9 @@ export function createApp(deps: AppDependencies): Express {
       requestId: req.requestId ?? "unknown",
       instance: req.originalUrl,
       problemBaseUri: deps.env.problemBaseUri,
-      exposeStack: false,
     });
     res.status(problem.status).type("application/problem+json").json(problem);
   });
-  app.use(errorHandler(deps.env));
+  app.use(errorHandler(deps.env, deps.logger));
   return app;
 }

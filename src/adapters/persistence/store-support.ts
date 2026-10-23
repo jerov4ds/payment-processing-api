@@ -37,6 +37,9 @@ export function insertInto(
   payment: Payment,
   idempotency: IdempotencyRecord,
 ): void {
+  if (payment.clientId !== idempotency.clientId) {
+    throw new Error("Payment client does not match the idempotency record");
+  }
   if (state.payments.some((existing) => existing.id === payment.id)) {
     throw new Error(`Payment id already exists: ${payment.id}`);
   }
@@ -69,6 +72,9 @@ export function updateIn(
   if (current.version !== expectedVersion) {
     throw new VersionConflictError();
   }
+  if (current.clientId !== payment.clientId) {
+    throw new Error("Payment client cannot change");
+  }
   const stored = cloneState(payment);
   state.payments[index] = stored;
   return cloneState(stored);
@@ -79,6 +85,7 @@ export function listFrom(
   query: ListPaymentsQuery,
 ): ListPaymentsResult {
   const filtered = state.payments
+    .filter((payment) => payment.clientId === query.clientId)
     .filter((payment) =>
       query.status === undefined ? true : payment.status === query.status,
     )

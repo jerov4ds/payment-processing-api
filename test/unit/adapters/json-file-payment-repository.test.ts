@@ -75,6 +75,37 @@ describe("json file payment repository", () => {
     await rm(directory, { recursive: true, force: true });
   });
 
+  it("assigns a client from the idempotency record when an older file has none", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "payments-legacy-"));
+    const filePath = path.join(directory, "payments.json");
+    const legacy = samplePayment();
+    const withoutClient: Partial<typeof legacy> = { ...legacy };
+    delete withoutClient.clientId;
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        schemaVersion: 1,
+        payments: [withoutClient],
+        idempotencyKeys: [
+          {
+            clientId: "demo",
+            key: legacy.idempotencyKey,
+            requestHash: "hash",
+            paymentId: legacy.id,
+            responseStatus: 202,
+            responseBody: withoutClient,
+            createdAt: legacy.createdAt,
+          },
+        ],
+      }),
+      "utf8",
+    );
+    const repo = new JsonFilePaymentRepository(filePath, createMockLogger());
+    await repo.init();
+    expect((await repo.findById(legacy.id))?.clientId).toBe("demo");
+    await rm(directory, { recursive: true, force: true });
+  });
+
   it("refuses to start when the parent directory does not exist", async () => {
     const filePath = path.join(
       os.tmpdir(),
@@ -112,7 +143,7 @@ describe("json file payment repository", () => {
         });
       }),
     );
-    const page = await repo.list({ limit: 50, offset: 0 });
+    const page = await repo.list({ clientId: "demo", limit: 50, offset: 0 });
     expect(page.total).toBe(20);
     await rm(directory, { recursive: true, force: true });
   });

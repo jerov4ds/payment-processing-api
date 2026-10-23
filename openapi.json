@@ -26,6 +26,9 @@
             "type": "string",
             "format": "uuid"
           },
+          "clientId": {
+            "type": "string"
+          },
           "amount": {
             "type": "integer"
           },
@@ -113,6 +116,7 @@
         },
         "required": [
           "id",
+          "clientId",
           "amount",
           "currency",
           "status",

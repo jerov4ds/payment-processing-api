@@ -170,7 +170,7 @@ export function consolePage(): string {
       <p id="banner" class="banner" role="alert"></p>
       <form id="charge-form">
         <label for="api-key">API key</label>
-        <input id="api-key" name="apiKey" autocomplete="off" spellcheck="false" value="dev-api-key-change-me" />
+        <input id="api-key" name="apiKey" autocomplete="off" spellcheck="false" placeholder="Paste the secret from API_KEYS" />
         <div class="row">
           <div>
             <label for="amount">Amount</label>
@@ -312,6 +312,13 @@ export function consolePage(): string {
     }
 
     async function refresh() {
+      if (!apiKey()) {
+        payments = [];
+        list.replaceChildren();
+        note.hidden = false;
+        note.textContent = "Paste an API key to read this client's ledger.";
+        return;
+      }
       sessionStorage.setItem(storageKey, apiKey());
       const page = await request("/api/v1/payments?limit=20", { auth: true });
       payments = page.data || [];
@@ -391,6 +398,10 @@ export function consolePage(): string {
     async function onSubmit(event) {
       event.preventDefault();
       clearBanner();
+      if (!apiKey()) {
+        showError(new Error("Paste the API key secret from API_KEYS."));
+        return;
+      }
       submitButton.disabled = true;
       try {
         const description = descriptionInput.value.trim();
@@ -407,8 +418,8 @@ export function consolePage(): string {
           body: JSON.stringify(payload),
         });
         idempotencyInput.value = newIdempotencyKey();
-      await watch();
-      checkHealth();
+        await watch();
+        checkHealth();
       } catch (error) {
         showError(error);
       } finally {

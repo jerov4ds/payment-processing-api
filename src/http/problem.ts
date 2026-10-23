@@ -48,14 +48,12 @@ export interface Problem {
   code: string;
   requestId: string;
   errors?: ProblemErrorItem[];
-  stack?: string;
 }
 
 export interface ProblemContext {
   requestId: string;
   instance: string;
   problemBaseUri: string;
-  exposeStack: boolean;
 }
 
 export function toProblem(error: unknown, context: ProblemContext): Problem {
@@ -80,12 +78,6 @@ export function toProblem(error: unknown, context: ProblemContext): Problem {
     code: "INTERNAL_ERROR",
     requestId: context.requestId,
   };
-  if (context.exposeStack && error instanceof Error) {
-    problem.detail = error.message;
-    if (error.stack) {
-      problem.stack = error.stack;
-    }
-  }
   return problem;
 }
 
@@ -103,9 +95,6 @@ function fromCoded(error: CodedError, context: ProblemContext): Problem {
   const errors = error.details?.errors;
   if (Array.isArray(errors)) {
     problem.errors = errors.filter(isProblemErrorItem);
-  }
-  if (context.exposeStack && error.stack && status !== 500) {
-    problem.stack = error.stack;
   }
   return problem;
 }

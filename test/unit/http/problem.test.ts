@@ -8,7 +8,6 @@ const context = {
   requestId: "req-1",
   instance: "/api/v1/payments",
   problemBaseUri: "https://payment-service.local/problems",
-  exposeStack: false,
 };
 
 describe("problem details", () => {
@@ -24,33 +23,30 @@ describe("problem details", () => {
       requestId: "req-1",
       type: "https://payment-service.local/problems/invalid-transition",
     });
-    expect(problem.stack).toBeUndefined();
+    expect("stack" in problem).toBe(false);
     expect(JSON.stringify(problem)).not.toContain("node_modules");
   });
 
-  it("includes field errors and a stack only in development", () => {
+  it("includes field errors and never a stack", () => {
     const error = new ValidationError("Request validation failed", {
       errors: [{ path: "amount", message: "Expected integer" }],
     });
-    const hidden = toProblem(error, context);
-    expect(hidden.status).toBe(400);
-    expect(hidden.errors).toEqual([
+    const problem = toProblem(error, context);
+    expect(problem.status).toBe(400);
+    expect(problem.errors).toEqual([
       { path: "amount", message: "Expected integer" },
     ]);
-    expect(hidden.stack).toBeUndefined();
-    const exposed = toProblem(error, { ...context, exposeStack: true });
-    expect(exposed.stack).toContain("ValidationError");
+    expect("stack" in problem).toBe(false);
+    expect(JSON.stringify(problem)).not.toContain("ValidationError:");
   });
 
-  it("hides unexpected errors outside development and reveals them in development", () => {
+  it("hides unexpected error details from the client", () => {
     const failure = new Error("disk sector 7 secret");
-    const hidden = toProblem(failure, context);
-    expect(hidden).toMatchObject({ status: 500, code: "INTERNAL_ERROR" });
-    expect(hidden.detail).toBe("An unexpected error occurred.");
-    expect(JSON.stringify(hidden)).not.toContain("secret");
-    const exposed = toProblem(failure, { ...context, exposeStack: true });
-    expect(exposed.detail).toBe("disk sector 7 secret");
-    expect(exposed.stack).toContain("disk sector 7 secret");
+    const problem = toProblem(failure, context);
+    expect(problem).toMatchObject({ status: 500, code: "INTERNAL_ERROR" });
+    expect(problem.detail).toBe("An unexpected error occurred.");
+    expect("stack" in problem).toBe(false);
+    expect(JSON.stringify(problem)).not.toContain("secret");
   });
 
   it("recognizes body-parser failures", () => {

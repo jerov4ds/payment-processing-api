@@ -14,6 +14,7 @@ describe("logger redaction", () => {
           headers: {
             "x-api-key": "super-secret-value",
             authorization: "Bearer abc",
+            "idempotency-key": "order-1042-secret-key",
           },
           body: { paymentMethod: { token: "tok_secret_token" } },
         },
@@ -26,6 +27,7 @@ describe("logger redaction", () => {
     const text = lines.join("");
     expect(text).not.toContain("super-secret-value");
     expect(text).not.toContain("Bearer abc");
+    expect(text).not.toContain("order-1042-secret-key");
     expect(text).not.toContain("tok_secret_token");
     expect(text).not.toContain("tok_other");
     expect(text).not.toContain("4242424242424242");

@@ -12,6 +12,7 @@ export interface IdempotencyRecord {
 }
 
 export interface ListPaymentsQuery {
+  clientId: string;
   status?: PaymentStatus | undefined;
   limit: number;
   offset: number;

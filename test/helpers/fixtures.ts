@@ -17,6 +17,7 @@ export const OTHER_PAYMENT_ID = "3fa85f64-5717-4562-b3fc-2c963f66afa7";
 export function samplePayment(overrides: Partial<Payment> = {}): Payment {
   return {
     id: PAYMENT_ID,
+    clientId: "demo",
     amount: 150000,
     currency: "NGN",
     status: "PENDING",

@@ -73,6 +73,7 @@ export class PaymentService {
         }
         const payment = createPayment({
           id: this.deps.ids.uuid(),
+          clientId: context.clientId,
           amount: input.amount,
           currency: input.currency,
           description: input.description,
@@ -116,9 +117,9 @@ export class PaymentService {
     }
   }
 
-  async get(id: string): Promise<Payment> {
+  async get(id: string, clientId: string): Promise<Payment> {
     const payment = await this.deps.repository.findById(id);
-    if (!payment) {
+    if (!payment || payment.clientId !== clientId) {
       throw new PaymentNotFoundError(id);
     }
     return payment;
@@ -131,11 +132,12 @@ export class PaymentService {
   async transition(
     id: string,
     command: ClientTransition,
+    clientId: string,
     ifMatch?: number,
   ): Promise<Payment> {
     return this.deps.repository.withTransaction(async (tx) => {
       const payment = await tx.findByIdForUpdate(id);
-      if (!payment) {
+      if (!payment || payment.clientId !== clientId) {
         throw new PaymentNotFoundError(id);
       }
       if (ifMatch !== undefined && payment.version !== ifMatch) {

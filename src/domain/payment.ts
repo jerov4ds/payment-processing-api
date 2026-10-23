@@ -36,6 +36,7 @@ const METHOD_SET: ReadonlySet<string> = new Set(PAYMENT_METHOD_TYPES);
 
 export interface Payment {
   id: string;
+  clientId: string;
   amount: number;
   currency: Currency;
   status: PaymentStatus;
@@ -54,6 +55,7 @@ export interface Payment {
 
 export interface NewPaymentInput {
   id: string;
+  clientId: string;
   amount: number;
   currency: string;
   description?: string | undefined;
@@ -82,9 +84,13 @@ export function createPayment(input: NewPaymentInput): Payment {
   if (/^\d{13,19}$/.test(input.paymentMethod.token)) {
     throw new ValidationError("Raw card numbers are not accepted");
   }
+  if (!/^[A-Za-z0-9._-]{1,64}$/.test(input.clientId)) {
+    throw new ValidationError("Invalid API client");
+  }
   const timestamp = input.now.toISOString();
   return {
     id: input.id,
+    clientId: input.clientId,
     amount: input.amount,
     currency: input.currency,
     status: "PENDING",
