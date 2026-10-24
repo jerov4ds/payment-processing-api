@@ -744,3 +744,27 @@ Response: `404 Not Found`, `Content-Type: application/problem+json`, `code` `ROU
 ### Desk after the security fix
 
 `GET /` returned `200`, `X-Frame-Options: DENY`, and `Content-Security-Policy: frame-ancestors 'none'`. The HTML does not contain `dev-api-key-change-me`. The API key field placeholder is `Paste the secret from API_KEYS`.
+
+## 8. More edge-case tests
+
+### Prompt
+
+```text
+Going through the tests they are great but I need you to add more tests to cover edge cases. So far the tests cover positive parts and some negatives. I need it to cover more edge cases
+```
+
+### Response
+
+The suite now covers the boundaries around the rules that were only tested in the middle.
+
+**Money, methods, and tokens.** Amounts `1` and `9_999_999_999` are accepted. `0`, negatives, floats, `NaN`, and one past the maximum are rejected. A 4-character token is stored as its own last4. Tokens of 12 and 20 digits are accepted. 13, 16, and 19 digit tokens are rejected as raw card numbers, and the PAN is not echoed. `bank_transfer` and `wallet` are accepted. `cash` and `CARD` are not.
+
+**Metadata and descriptions.** 20 keys are accepted, 21 are not. A 256-character string is accepted, 257 is not. Floats, nulls, objects, arrays, spaced keys, and `constructor` / `prototype` are rejected. A 64-character key is accepted. An empty description is rejected. A 255-character description and a single space are stored. Omitted metadata and `{}` are different idempotency bodies. `1` and `true` are different bodies. Object key order is not.
+
+**Idempotency and If-Match.** Keys of length 8 and 255 are accepted. Length 7, length 256, an internal space, and a slash are rejected. HTTP trims surrounding spaces, so `"  order-key  "` replays as `order-key`. The same key for two API clients creates two payments. Quoted `If-Match: "1"` and zero-padded `01` match version 1. An empty header, `1.0`, `1e1`, and a weak etag are 400. Version `0` is a conflict. Refund of `PENDING`, cancel of `PROCESSING` or `SUCCEEDED`, a second refund, and refund of `FAILED` are conflicts. Another client's patch is 404.
+
+**Paging, content type, and request ids.** The default page is limit 20. Limit 100 and offset past the end are valid. Limit 0, 101, a fractional limit, a negative offset, and a bad status are 400. `limit=1e2` coerces to 100. `application/json` with `charset=utf-8` is accepted, including uppercase. An extra parameter and `utf-16` are 415. A comma-separated type list is not parsed as a JSON object. A request id of 128 characters is echoed. 129 characters, and a dot, are replaced. Equal `createdAt` values sort by id. A processing lease expires at exactly `leaseMs` and not one millisecond earlier.
+
+**Failures and storage.** A gateway timeout becomes `FAILED` / `GATEWAY_TIMEOUT`. An unknown gateway error becomes `GATEWAY_UNAVAILABLE` and the message is not returned. A JSON store with the wrong schema version is left untouched and is not queryable. A new store file is mode `0600`. Deleting that file makes `ping` fail. A duplicate payment id, a client change, and a version that skips 1 are rejected. Zero and huge retry attempts stay inside the cap.
+
+136 tests passed. Domain and service coverage stayed at 100%.

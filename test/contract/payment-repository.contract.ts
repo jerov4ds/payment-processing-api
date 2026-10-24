@@ -186,6 +186,139 @@ export function paymentRepositoryContract(
       expect(stillDemo.total).toBe(2);
     });
 
+    it("keeps the same idempotency key for a second client", async () => {
+      const first = samplePayment();
+      const second = samplePayment({
+        id: OTHER_PAYMENT_ID,
+        clientId: "merchant",
+        idempotencyKey: first.idempotencyKey,
+      });
+      await repo.withTransaction(async (tx) => {
+        await tx.insert(first, idempotencyFor(first));
+      });
+      await repo.withTransaction(async (tx) => {
+        await tx.insert(second, idempotencyFor(second));
+      });
+      expect(
+        await repo.findByIdempotencyKey("demo", first.idempotencyKey),
+      ).toMatchObject({ paymentId: first.id });
+      expect(
+        await repo.findByIdempotencyKey("merchant", first.idempotencyKey),
+      ).toMatchObject({ paymentId: second.id });
+    });
+
+    it("rejects a duplicate id, a client change, and a skipped version", async () => {
+      const payment = samplePayment();
+      await repo.withTransaction(async (tx) => {
+        await tx.insert(payment, idempotencyFor(payment));
+      });
+      const duplicate = samplePayment({
+        idempotencyKey: "other-key",
+      });
+      await expect(
+        repo.withTransaction(async (tx) => {
+          await tx.insert(duplicate, idempotencyFor(duplicate));
+        }),
+      ).rejects.toThrow();
+      expect(await repo.findById(payment.id)).toEqual(payment);
+
+      await expect(
+        repo.withTransaction(async (tx) =>
+          tx.update(
+            { ...payment, version: payment.version + 2 },
+            payment.version,
+          ),
+        ),
+      ).rejects.toThrow(/increment by exactly 1/);
+      await expect(
+        repo.withTransaction(async (tx) =>
+          tx.update(
+            { ...payment, clientId: "merchant", version: payment.version + 1 },
+            payment.version,
+          ),
+        ),
+      ).rejects.toThrow(/cannot change/);
+      expect(await repo.findById(payment.id)).toEqual(payment);
+    });
+
+    it("pages past the end and breaks equal timestamps by id", async () => {
+      const earlierId = "3fa85f64-5717-4562-b3fc-2c963f66afa1";
+      const laterId = "3fa85f64-5717-4562-b3fc-2c963f66afa2";
+      const createdAt = "2026-01-15T12:00:00.000Z";
+      for (const id of [laterId, earlierId]) {
+        const payment = samplePayment({
+          id,
+          createdAt,
+          idempotencyKey: `tie-${id}`,
+        });
+        await repo.withTransaction(async (tx) => {
+          await tx.insert(payment, idempotencyFor(payment));
+        });
+      }
+      const page = await repo.list({
+        clientId: "demo",
+        limit: 1,
+        offset: 1,
+      });
+      expect(page.total).toBe(2);
+      expect(page.items.map((payment) => payment.id)).toEqual([laterId]);
+      const empty = await repo.list({
+        clientId: "demo",
+        limit: 10,
+        offset: 5,
+      });
+      expect(empty).toEqual({ total: 2, items: [] });
+      const first = await repo.list({
+        clientId: "demo",
+        limit: 1,
+        offset: 0,
+      });
+      expect(first.items.map((payment) => payment.id)).toEqual([earlierId]);
+    });
+
+    it("expires a processing lease on the exact boundary", async () => {
+      const now = "2026-01-15T12:00:05.000Z";
+      const exact = samplePayment({
+        id: "3fa85f64-5717-4562-b3fc-2c963f66afb1",
+        status: "PROCESSING",
+        idempotencyKey: "exact-lease",
+        processingStartedAt: "2026-01-15T12:00:00.000Z",
+        attempts: 1,
+        version: 2,
+      });
+      const inside = samplePayment({
+        id: "3fa85f64-5717-4562-b3fc-2c963f66afb2",
+        status: "PROCESSING",
+        idempotencyKey: "inside-lease",
+        processingStartedAt: "2026-01-15T12:00:00.001Z",
+        attempts: 1,
+        version: 2,
+      });
+      const missingLease = samplePayment({
+        id: "3fa85f64-5717-4562-b3fc-2c963f66afb3",
+        status: "PROCESSING",
+        idempotencyKey: "missing-lease",
+        processingStartedAt: null,
+        attempts: 1,
+        version: 2,
+      });
+      const settled = samplePayment({
+        id: "3fa85f64-5717-4562-b3fc-2c963f66afb4",
+        status: "SUCCEEDED",
+        idempotencyKey: "settled-lease",
+        processingStartedAt: "2026-01-15T11:00:00.000Z",
+      });
+      for (const payment of [exact, inside, missingLease, settled]) {
+        await repo.withTransaction(async (tx) => {
+          await tx.insert(payment, idempotencyFor(payment));
+        });
+      }
+      const recoverable = await repo.listRecoverable(now, 5_000);
+      expect(recoverable.map((payment) => payment.id).sort()).toEqual(
+        [exact.id, missingLease.id].sort(),
+      );
+    });
+
     it("answers ping", async () => {
       await expect(repo.ping()).resolves.toBeUndefined();
     });

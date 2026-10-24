@@ -1,8 +1,9 @@
 import {
+  CodedError,
   InvalidTransitionError,
   ValidationError,
 } from "../../../src/domain/errors";
-import { toProblem } from "../../../src/http/problem";
+import { problemType, toProblem } from "../../../src/http/problem";
 
 const context = {
   requestId: "req-1",
@@ -64,5 +65,43 @@ describe("problem details", () => {
       code: "VALIDATION_ERROR",
       detail: "Request body is not valid JSON",
     });
+    const byStatusCode = Object.assign(new Error("too large"), {
+      statusCode: 413,
+    });
+    expect(toProblem(byStatusCode, context).code).toBe("PAYLOAD_TOO_LARGE");
+    const byType = Object.assign(new Error("too large"), {
+      type: "entity.too.large",
+    });
+    expect(toProblem(byType, context).status).toBe(413);
+  });
+
+  it("hides unknown codes and drops error items that are not path plus message", () => {
+    const unknown = toProblem(
+      new CodedError("NO_SUCH_CODE", "disk sector 7 secret"),
+      context,
+    );
+    expect(unknown).toMatchObject({
+      status: 500,
+      code: "INTERNAL_ERROR",
+      detail: "An unexpected error occurred.",
+    });
+    expect(JSON.stringify(unknown)).not.toContain("secret");
+    const bare = new SyntaxError("secret token in parse");
+    expect(JSON.stringify(toProblem(bare, context))).not.toContain("secret");
+    const filtered = toProblem(
+      new ValidationError("bad", {
+        errors: [
+          { path: "amount", message: "nope" },
+          { path: 1, message: "skip" },
+          null,
+          "x",
+        ],
+      }),
+      context,
+    );
+    expect(filtered.errors).toEqual([{ path: "amount", message: "nope" }]);
+    expect(
+      problemType("https://example.test/problems/", "VERSION_CONFLICT"),
+    ).toBe("https://example.test/problems/version-conflict");
   });
 });

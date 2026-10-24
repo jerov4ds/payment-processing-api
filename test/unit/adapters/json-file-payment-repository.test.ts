@@ -1,4 +1,12 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { JsonFilePaymentRepository } from "../../../src/adapters/persistence/json-file-payment-repository";
@@ -115,6 +123,35 @@ describe("json file payment repository", () => {
     );
     const repo = new JsonFilePaymentRepository(filePath, createMockLogger());
     await expect(repo.init()).rejects.toBeInstanceOf(StorageUnavailableError);
+  });
+
+  it("refuses a schema-invalid document and leaves the bytes alone", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "payments-schema-"));
+    const filePath = path.join(directory, "payments.json");
+    const raw = JSON.stringify({
+      schemaVersion: 2,
+      payments: [],
+      idempotencyKeys: [],
+    });
+    await writeFile(filePath, raw, "utf8");
+    const repo = new JsonFilePaymentRepository(filePath, createMockLogger());
+    await expect(repo.init()).rejects.toBeInstanceOf(StorageCorruptError);
+    expect(await readFile(filePath, "utf8")).toBe(raw);
+    expect(() => {
+      void repo.findById(samplePayment().id);
+    }).toThrow(StorageUnavailableError);
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  it("creates the store readable only by the owner and notices a deleted file", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "payments-mode-"));
+    const filePath = path.join(directory, "payments.json");
+    const repo = new JsonFilePaymentRepository(filePath, createMockLogger());
+    await repo.init();
+    expect((await stat(filePath)).mode & 0o777).toBe(0o600);
+    await unlink(filePath);
+    await expect(repo.ping()).rejects.toBeInstanceOf(StorageUnavailableError);
+    await rm(directory, { recursive: true, force: true });
   });
 
   it("keeps every concurrent insert of a distinct payment", async () => {

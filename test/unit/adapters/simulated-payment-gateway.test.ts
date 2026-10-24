@@ -144,5 +144,29 @@ describe("simulated payment gateway", () => {
     expect(first).toBe(second);
     expect(first).toBeGreaterThanOrEqual(10);
     expect(first).toBeLessThanOrEqual(40);
+    expect(
+      latencyMs({ ...options, minLatencyMs: 40, maxLatencyMs: 10 }, command),
+    ).toBe(40);
+    expect(
+      latencyMs({ ...options, minLatencyMs: 15, maxLatencyMs: 15 }, command),
+    ).toBe(15);
+  });
+
+  it("lets the attempt move a payment across the decline line", () => {
+    const decisions = new Set<string>();
+    for (let seed = 1; seed <= 64; seed += 1) {
+      for (const attempt of [1, 2]) {
+        decisions.add(
+          decideOutcome({
+            seed,
+            paymentId: command.paymentId,
+            attempt,
+            permanentRate: 0.5,
+            transientRate: 0,
+          }),
+        );
+      }
+    }
+    expect(decisions).toEqual(new Set(["approved", "declined"]));
   });
 });

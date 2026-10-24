@@ -26,6 +26,25 @@ describe("retry policy", () => {
 
   it("rejects a bad attempt or random source", () => {
     expect(() => computeBackoffMs(0, config, () => 0)).toThrow(/attempt/);
+    expect(() => computeBackoffMs(1.5, config, () => 0)).toThrow(/attempt/);
+    expect(() => computeBackoffMs(-1, config, () => 0)).toThrow(/attempt/);
     expect(() => computeBackoffMs(1, config, () => 1)).toThrow(/random/);
+    expect(() => computeBackoffMs(1, config, () => -0.01)).toThrow(/random/);
+  });
+
+  it("returns zero for a zero window and stays capped for a huge attempt", () => {
+    expect(
+      computeBackoffMs(1, { baseDelayMs: 0, maxDelayMs: 0 }, () => 0.5),
+    ).toBe(0);
+    expect(
+      computeBackoffMs(1024, { baseDelayMs: 100, maxDelayMs: 150 }, () => 0),
+    ).toBe(75);
+    expect(
+      computeBackoffMs(
+        1024,
+        { baseDelayMs: 100, maxDelayMs: 150 },
+        () => 0.999,
+      ),
+    ).toBe(149);
   });
 });
