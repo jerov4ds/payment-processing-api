@@ -2,9 +2,418 @@
 
 Record of this payment-service session: each prompt, the reply, and the HTTP calls used to check the running service.
 
-The original assignment asked for a design before any code. That design was accepted with the first prompt below. The assignment itself is not copied here because its full text was not retained in this log.
+## 1. Design, before any code
 
-## 1. Proceed to implementation
+### Prompt
+
+```text
+# Role & Context
+
+You are a senior Node.js engineer pairing with me on a take-home assessment for a Node.js + React Developer role. I am the owner of this project: I make the final technical decisions, and I will review every step before we move on. This full conversation will be submitted to the hiring team as a transcript, together with the Git history. So:
+- Explain your reasoning briefly when you make a design choice.
+- Never claim something works unless you have run it and shown me the output.
+- If a requirement is ambiguous, state your assumption explicitly and record it in the README under "Assumptions & Trade-offs".
+- Do not invent libraries, APIs, or config options. Use pinned, well-maintained packages.
+
+# The Assignment (verbatim requirements)
+
+Build a Node.js microservice that simulates payment processing, exposing a RESTful API to create, retrieve, and update payment statuses.
+- Express server with endpoints: create payment (POST), get payment by ID (GET), update payment status (PATCH)
+- Simulate payment processing logic with asynchronous operations
+- In-memory or file-based (JSON) persistence
+- Proper error responses (invalid input, service errors)
+- Unit tests and API documentation (Swagger)
+- README with setup, API details, and testing instructions; clear local run instructions
+
+The evaluators explicitly grade: ownership and problem-solving, failure handling, background processing reliability, security and code quality, and project completeness (edge cases, real-world polish).
+
+# Tech Stack (decided)
+
+- Node.js 20 LTS, TypeScript (strict mode), Express
+- Validation: zod (request schemas drive both validation and the OpenAPI spec where practical)
+- Docs: OpenAPI 3 + swagger-ui-express at /docs, spec also exported as openapi.json
+- Logging: pino with request-id correlation and redaction of sensitive fields
+- Testing: Jest + supertest; strict TDD (red → green → refactor)
+- Lint/format: ESLint + Prettier; enforced in CI
+- Docker + docker-compose; GitHub Actions CI (lint, typecheck, test, coverage)
+
+# Architecture
+
+Layered, framework-agnostic core:
+- `routes/controllers` → `services` (domain logic) → `repositories` (persistence port) → adapters
+- Domain: a Payment aggregate with an explicit state machine
+- Dependency injection via a simple composition root (no heavy DI framework), so tests can swap adapters and the simulated gateway
+
+## Payment domain
+
+- Amount stored as integer minor units (e.g. kobo/cents), never floats; ISO 4217 currency allow-list
+- Never accept or store raw card numbers/CVV. Accept a payment method token or a mock method type; store only masked/last4 data if anything
+- Fields include: id (UUID), amount, currency, status, description, metadata, idempotencyKey, version (for optimistic locking), attempts, failureReason, createdAt, updatedAt
+- State machine with enforced transitions, e.g.:
+  PENDING → PROCESSING → SUCCEEDED | FAILED
+  PENDING → CANCELLED
+  SUCCEEDED → REFUNDED
+  Terminal states cannot change. Invalid transitions return 409 with a clear error code.
+- PATCH /payments/:id/status only allows transitions a client may legitimately request (e.g. cancel, refund). System-driven transitions happen only in the background processor. Document this decision.
+
+## Persistence, transactions & locking
+
+- `PaymentRepository` interface with transactional semantics (`withTransaction`/unit-of-work style)
+- Adapter 1 (default, meets the brief): JSON file store
+  - Atomic writes (write to temp file + fsync + rename)
+  - Serialized write queue / mutex so concurrent requests cannot corrupt the file or lose updates
+  - Optimistic concurrency via a `version` field; a conflicting update returns 409 (or retries internally where safe)
+  - Safe handling of a missing or corrupt file on startup (fail loudly with a clear log, do not silently wipe data)
+- Adapter 2 (scale story): PostgreSQL via docker-compose
+  - Real transactions, `SELECT ... FOR UPDATE` or version-checked updates, unique constraint on idempotency key
+  - Selected by env var; the same repository contract tests run against both adapters
+- In-memory adapter for fast unit tests
+
+## Background processing (key evaluation area)
+
+- POST returns 202 Accepted with the payment in PENDING. Processing happens asynchronously.
+- Job queue abstraction with an in-process implementation by default (and a note on a BullMQ/Redis swap for multi-instance)
+- Simulated payment gateway with configurable latency, failure rate, and timeout behaviour; deterministic, seedable for tests
+- Reliability requirements:
+  - Timeouts on gateway calls
+  - Retries with exponential backoff + jitter for transient errors only; no retry on permanent declines
+  - Max attempts, then mark FAILED with reason (dead-letter style record)
+  - Idempotent processing: a job for a payment already in a terminal state is a no-op
+  - Recovery on restart: payments stuck in PENDING/PROCESSING are re-enqueued
+  - Concurrency limit on workers
+  - Graceful shutdown: stop accepting requests, drain in-flight jobs within a timeout, flush storage, then exit
+
+## API
+
+- `POST /api/v1/payments` requires an `Idempotency-Key` header. Same key + same body returns the original response; same key + different body returns 422.
+- `GET /api/v1/payments/:id`, validating that the id is a UUID
+- `PATCH /api/v1/payments/:id/status`
+- `GET /api/v1/payments` with pagination and status filter (nice to have; flag if you think it's scope creep)
+- `GET /health/live` and `GET /health/ready` (ready checks storage)
+- Consistent error format (RFC 7807 problem+json) with stable machine-readable error codes, a request id, and no stack traces or internals leaked outside development
+- Correct status codes: 400/404/409/413/415/422/429/500/503
+
+## Security
+
+- helmet, CORS allow-list from config, JSON body size limit, strict content-type
+- Rate limiting
+- Simple API-key auth via header (keys from env, constant-time compare), documented in Swagger
+- Validate and strip unknown fields; guard against prototype pollution
+- Env config validated at startup with zod; fail fast on bad config; `.env.example` provided, no secrets committed
+- Log redaction for auth headers and any payment-method data
+- `npm audit` clean or explained
+
+## Testing
+
+- TDD: write failing tests first, then implement
+- Unit tests: state machine, service logic, retry/backoff, idempotency, repository adapters, error mapping
+- Integration tests: full HTTP flows with supertest, including the async lifecycle (create → processing → final state), using fake timers or a deterministic gateway
+- Concurrency tests: parallel PATCHes on the same payment produce exactly one winner; duplicate idempotent POSTs create exactly one payment
+- Failure tests: gateway timeout, transient failure then success, permanent failure, corrupt storage file, shutdown mid-job
+- Shared repository contract test suite run against every adapter
+- Coverage threshold enforced (≥ 90% lines/branches on domain and services)
+
+## Documentation
+
+README containing: overview, architecture diagram (Mermaid), setup (local + Docker), env vars table, API summary with curl examples, how to run tests, the payment state diagram, failure-handling and background-processing design, security notes, "Assumptions & Trade-offs", and "What I'd do next for production".
+
+# Workflow Rules (important)
+
+1. Do NOT write code yet. First reply with:
+   - Your understanding of the requirements and any ambiguities
+   - Proposed folder structure
+   - The state machine and API contract
+   - A numbered implementation plan broken into small, commit-sized steps
+   Then wait for my approval.
+2. Work one step at a time. For each step: tests first, implementation, run the tests and show the results, then propose a Conventional Commit message (feat:, test:, fix:, refactor:, docs:, chore:). Stop and wait for me to review and commit before the next step.
+3. Keep commits small and meaningful so the Git history shows the solution evolving.
+4. If you find a bug or a better approach mid-way, call it out explicitly instead of silently changing earlier work.
+5. At the end, do a self-review against the evaluation criteria above and list any remaining gaps honestly.
+
+Start with step 1.
+```
+
+### Response
+
+The design below is the whole of this step. No application code until you approve it.
+
+## Understanding
+
+This is a single Node.js 20 service that accepts a payment, persists it as `PENDING`, returns **202 Accepted**, and reaches a terminal status on a background worker. The HTTP layer is Express. The core is a small payment aggregate with a hard state machine, a repository port, and a gateway port. The default store is a JSON file with atomic writes and a write mutex. PostgreSQL is a second adapter behind the same port, selected by configuration. Tests use an in-memory adapter.
+
+Clients may create a payment, read it, and request the two transitions a caller can legitimately own: cancel and refund. The worker is the only component that may move a payment through `PROCESSING` to `SUCCEEDED` or `FAILED`.
+
+Idempotency, optimistic locking, retries, crash recovery, and graceful shutdown are part of the assignment, not extras. Security is a default-deny edge: API key, allow-listed CORS, body limits, strict content type, rate limit, schema stripping, and redacted logs.
+
+## Assumptions and trade-offs
+
+These are the choices I will implement if you approve this plan. Each one is recorded so the README can copy it later.
+
+1. **Idempotency replay returns the stored response.** `POST` persists the status code and body from the moment of creation. A repeated key with the same canonical body returns that snapshot again (202 and the original `PENDING` document). Live status is `GET /api/v1/payments/:id`. The snapshot is what makes “the original response” stable after the worker has finished. The idempotency hash is SHA-256 of the validated body with object keys sorted, so stripped unknown fields do not change the hash. Keys match `^[A-Za-z0-9._:-]{8,255}$`. Uniqueness is per API client id, so two clients can reuse the same key. Records live for the life of the store. A TTL sweeper is deferred.
+
+2. **Client transitions are only cancel and refund.** `PATCH` accepts `{ "status": "CANCELLED" | "REFUNDED", "reason"?: string }`. `PROCESSING`, `SUCCEEDED`, and `FAILED` are processor-only. A body that names any other status is **400** `VALIDATION_ERROR`. A legal status that the current state forbids is **409** `INVALID_TRANSITION`. Cancel is valid only from `PENDING`. A payment sitting in `PROCESSING` (gateway call in flight) cannot be cancelled. Refund is a full refund, applied inside the request’s transaction, with no second gateway hop and no `REFUND_PENDING` state. Partial refunds are deferred.
+
+3. **Backoff releases the payment back to `PENDING`.** After a transient failure with attempts still remaining, the row returns to `PENDING` and the queue schedules a delayed job. Cancel stays available between attempts. The delay itself lives in the in-process queue. A crash during the wait loses the timer. Startup recovery re-enqueues immediately, so a restart can retry sooner than the backoff schedule. A durable delay needs the BullMQ/Redis swap described below.
+
+4. **Attempts increment only on `PENDING` → `PROCESSING`.** A crashed in-flight attempt is reclaimed after `PROCESSING_LEASE_MS` without incrementing `attempts`. The simulated gateway is a pure function of `(seed, paymentId, attempt)`, so reclaiming the same attempt replays the same decision. That is the simulator’s stand-in for a gateway idempotency key of `paymentId:attempt`. Default max attempts is 3. Exhausted transient errors become `FAILED` with the last transient reason (`GATEWAY_TIMEOUT` or `GATEWAY_UNAVAILABLE`). A permanent decline fails on the first response with `PAYMENT_DECLINED` and is not retried.
+
+5. **The payment row is the source of truth for work, not the queue.** The in-process queue is an optimization. `POST` commits the `PENDING` row first, then enqueues. If enqueue fails, the API still returns 202 and a reconciler (plus startup recovery) will see the row. On boot, every `PENDING` payment and every `PROCESSING` payment whose lease has expired is enqueued. A job whose payment is already terminal is a no-op. A second worker that loses the claim transaction does not call the gateway. The queue interface is small enough to replace with BullMQ later. I will not add Redis in this project.
+
+6. **JSON file: missing is empty, corrupt is fatal.** If the file is absent and its parent directory exists, the process logs that and creates an empty document. If the file exists and is not valid JSON, or fails the store schema, the process logs the path and exits before it listens. It does not rewrite the file. Writes happen under a process-wide mutex: write a temp file in the same directory, `fsync`, then rename. `withTransaction` clones the document, runs the callback, and swaps the clone in on success. A throw discards the clone. Repository callbacks must not perform gateway I/O while holding the transaction. PostgreSQL uses a real `BEGIN` / `COMMIT` and `SELECT … FOR UPDATE`. Both adapters, plus memory, run the same contract suite.
+
+7. **Optimistic locking always happens on the server.** Every mutation compares `version` and increments it. Concurrent updates produce one winner and one **409** `VERSION_CONFLICT`. Clients may send `If-Match: "<version>"`. When the header is present and stale, the response is the same 409. When it is absent, the server still locks internally. I am not introducing **428**, because the brief’s status list does not include it. Missing `If-Match` stays legal.
+
+8. **Money is integer minor units.** Currencies are `NGN`, `USD`, `EUR`, and `GBP`, each with exponent 2. `amount` is an integer from 1 through `9_999_999_999` (safe for a JS number, and for `bigint` in PostgreSQL). Example: ₦1,500.00 is `150000`. Zero-decimal currencies are deferred. The public amount field is a JSON integer, checked with zod `.int()`.
+
+9. **Card data stops at the edge.** The body accepts `paymentMethod: { type: "card" | "bank_transfer" | "wallet", token }`. The token matches `^[A-Za-z0-9_-]{4,64}$`. The stored and returned method is `{ type, last4 }`, where `last4` is the last four characters of the token. The raw token is not persisted, not logged, and not required on recovery, because the simulator decides from the payment id and attempt. A production gateway would persist a vault reference. That limitation will be explicit in the README.
+
+10. **Extra fields beyond the brief, all justified.** Public: `paymentMethod`, `statusReason` (client cancel/refund reason), `processingStartedAt` (lease timestamp, null unless `PROCESSING`). Internal only: API client id, idempotency request hash, and the response snapshot. `failureReason` stays system-owned.
+
+11. **List is in scope.** `GET /api/v1/payments` with `status`, `limit` (default 20, max 100), and `offset` (default 0), ordered by `createdAt` descending and `id` ascending. The recovery scan already forces a query API, so the route is a thin mapping. Say if you want this step dropped. Cursor pagination is deferred. The file adapter answers it with a full scan, which matches a single JSON document.
+
+12. **401 is required even though the brief’s list omitted it.** Missing or unknown `X-Api-Key` is **401** `UNAUTHORIZED`. Health, `/docs`, and `/openapi.json` are unauthenticated. Every other route requires a key. Keys come from `API_KEYS` as comma-separated `clientId:secret` pairs. Comparison is SHA-256 of each candidate, then `crypto.timingSafeEqual` on the digests. An empty key list fails startup. There is no anonymous mode.
+
+13. **Unknown JSON fields are stripped, matching the brief.** A typo in a field name is ignored, and it does not affect the idempotency hash. Metadata is at most 20 keys matching `^[A-Za-z0-9_.-]{1,64}$`, values limited to strings (max 256), finite safe integers, and booleans. Stored metadata uses a null-prototype object. `__proto__`, `constructor`, and `prototype` never become properties.
+
+14. **PostgreSQL tests skip locally when `DATABASE_URL` is unset, and fail in CI if they do not run.** `CI=true` without a database URL fails the suite, so a green GitHub Actions run means the contract suite actually hit Postgres. One SQL file, `db/migrations/001_init.sql`, applies on startup when `AUTO_MIGRATE=true`. A migration framework is deferred.
+
+15. **Shutdown exits 0 after the drain deadline.** The process stops accepting requests, readiness goes **503**, the queue stops starting jobs, and in-flight work gets `SHUTDOWN_DRAIN_MS` (default 10s). Leftover `PROCESSING` rows are logged and left for the next boot. Exiting 0 avoids a crash loop when the supervisor restarts the process. The JSON mutex is allowed to finish its current write before exit.
+
+16. **Coverage gate is 90% lines and branches for `src/domain` and `src/services`.** Adapters are covered by the contract suite and HTTP tests, and are outside that numeric gate so a logging branch cannot fail the build. I will still write the adapter tests the brief names.
+
+17. **One commit per step.** Inside the step I will show the failing test output, then the passing output. The commit contains both, because you asked for one Conventional Commit message per step. I can split a red `test:` commit and a green `feat:` commit if you want that history instead.
+
+18. **Module format is CommonJS.** TypeScript `strict`, `noUncheckedIndexedAccess`, `noImplicitReturns`, target ES2022, emitted as CommonJS so Jest and ts-jest stay on the supported path. `exactOptionalPropertyTypes` stays off because it fights zod’s optional inference. Prettier stays on its defaults.
+
+19. **OpenAPI is generated from the zod schemas** with `@asteasolutions/zod-to-openapi`, served by `swagger-ui-express` at `/docs`, and written to `openapi.json`. I will confirm that package’s current release against the zod major at install time. If that pairing does not resolve cleanly, the fallback is an OpenAPI document built in TypeScript from the same shared enums and limits, plus a test that every route is present. I will not invent a third library.
+
+20. **Injected `Clock`, `Sleeper`, and `IdGenerator`.** Tests advance backoff and leases without Jest fake timers, which deadlock easily under supertest. The simulated gateway also accepts a scripted fake for failure-path tests.
+
+Defaults I will put in `.env.example` (all overridable): port `4317`, JSON driver, gateway failure rates `0`, latency `20–50ms`, timeout `2000ms`, max attempts `3`, retry base `50ms`, retry cap `2000ms`, worker concurrency `5`, body limit `16kb`, rate limit `100` requests per `60s` per API key. A fresh clone that curls `POST` then `GET` should observe `PENDING` and then `SUCCEEDED`.
+
+## Folder structure
+
+```text
+src/
+  index.ts                          # listen, signals, shutdown
+  app.ts                            # express factory
+  config/env.ts                     # zod-validated environment
+  composition/create-container.ts   # wires ports to adapters
+  domain/
+    payment.ts
+    payment-state-machine.ts
+    money.ts
+    errors.ts
+  repositories/payment-repository.ts
+  services/
+    payment-service.ts              # create, get, list, client transition
+    payment-processor.ts            # claim, gateway, retry, recovery
+    retry.ts
+    shutdown.ts
+  adapters/
+    persistence/memory-payment-repository.ts
+    persistence/json-file-payment-repository.ts
+    persistence/postgres-payment-repository.ts
+    gateway/simulated-payment-gateway.ts
+    queue/in-process-job-queue.ts
+    logging/logger.ts
+    time/system-clock.ts
+  controllers/payment-controller.ts
+  controllers/health-controller.ts
+  routes/payments.ts
+  routes/health.ts
+  routes/docs.ts
+  middleware/                     # request id, auth, content-type, errors, rate limit
+  openapi/spec.ts
+db/migrations/001_init.sql
+test/unit/
+test/integration/
+test/contract/payment-repository.contract.ts
+```
+
+Dependency direction: routes and controllers depend on services. Services depend on repository, gateway, and queue ports. Adapters implement ports. Domain imports none of them. `create-container.ts` is the only composition root. Tests construct the graph with the memory repository and a scripted gateway.
+
+## State machine
+
+```mermaid
+stateDiagram-v2
+  [*] --> PENDING: POST committed
+  PENDING --> PROCESSING: worker claims
+  PROCESSING --> SUCCEEDED: gateway approval
+  PROCESSING --> FAILED: permanent decline or attempts exhausted
+  PROCESSING --> PENDING: transient error, attempts remain
+  PENDING --> CANCELLED: client PATCH
+  SUCCEEDED --> REFUNDED: client PATCH
+  SUCCEEDED --> [*]
+  FAILED --> [*]
+  CANCELLED --> [*]
+  REFUNDED --> [*]
+```
+
+| From         | To           | Actor                      | Lost race                         |
+| ------------ | ------------ | -------------------------- | --------------------------------- |
+| `PENDING`    | `PROCESSING` | Worker claim               | Second worker no-ops              |
+| `PROCESSING` | `SUCCEEDED`  | Worker                     |                                   |
+| `PROCESSING` | `FAILED`     | Worker                     |                                   |
+| `PROCESSING` | `PENDING`    | Worker, scheduling a retry |                                   |
+| `PENDING`    | `CANCELLED`  | Client                     | 409 if the worker already claimed |
+| `SUCCEEDED`  | `REFUNDED`   | Client                     | 409 on version conflict           |
+
+`FAILED`, `CANCELLED`, and `REFUNDED` have no outgoing edges. `SUCCEEDED` has only the refund edge. Replaying a finished job does not change the row.
+
+Claim transaction, held only around the row update:
+
+- Terminal status: skip.
+- `PROCESSING` with a live lease: skip. Someone else owns the gateway call.
+- `PROCESSING` with an expired lease: keep the attempt number, refresh `processingStartedAt`, increment `version`, then call the gateway outside the lock.
+- `PENDING`: increment `attempts` and `version`, set `PROCESSING` and `processingStartedAt`, then call the gateway outside the lock.
+
+The gateway call sits outside the transaction so a slow simulator does not block every other write. The final write is `UPDATE … WHERE version = claimedVersion`. A conflict is logged and the job stops. Recovery handles a crash between the two transactions.
+
+Retry delay, equal jitter, with a seeded RNG in tests:
+
+```text
+exp = min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * 2^(attempt - 1))
+delay = exp / 2 + random(0, exp / 2)
+```
+
+Permanent `PaymentDeclinedError` skips this formula. `GatewayTimeoutError` and `GatewayUnavailableError` use it until `attempts` reaches `PAYMENT_MAX_ATTEMPTS`.
+
+## API contract
+
+Base path `/api/v1`. Payment JSON uses camelCase. Timestamps are ISO-8601 UTC. Errors are `application/problem+json`.
+
+```json
+{
+  "type": "https://payment-service.local/problems/invalid-transition",
+  "title": "Conflict",
+  "status": 409,
+  "detail": "Cannot transition from PROCESSING to CANCELLED",
+  "instance": "/api/v1/payments/3f1c…/status",
+  "code": "INVALID_TRANSITION",
+  "requestId": "8c0b…"
+}
+```
+
+`stack` appears only when `NODE_ENV=development`. `type` is a stable URI under `PROBLEM_BASE_URI`. It does not need to resolve.
+
+| Status | `code`                    | When                                                    |
+| ------ | ------------------------- | ------------------------------------------------------- |
+| 400    | `VALIDATION_ERROR`        | Schema failure, including a non-UUID id                 |
+| 400    | `MISSING_IDEMPOTENCY_KEY` | `POST` without the header                               |
+| 401    | `UNAUTHORIZED`            | Missing or unknown API key                              |
+| 404    | `PAYMENT_NOT_FOUND`       | UUID that is not stored                                 |
+| 409    | `INVALID_TRANSITION`      | Client status is legal and the current state forbids it |
+| 409    | `VERSION_CONFLICT`        | Stale version or lost parallel update                   |
+| 413    | `PAYLOAD_TOO_LARGE`       | Body over the configured limit                          |
+| 415    | `UNSUPPORTED_MEDIA_TYPE`  | `POST` or `PATCH` whose content type is not JSON        |
+| 422    | `IDEMPOTENCY_KEY_REUSED`  | Same key, different body hash                           |
+| 429    | `RATE_LIMITED`            | Over the per-key window                                 |
+| 500    | `INTERNAL_ERROR`          | Unexpected failure                                      |
+| 503    | `NOT_READY`               | Shutting down, or readiness probe and the store is down |
+
+**`POST /api/v1/payments`** requires `X-Api-Key`, `Idempotency-Key`, and `Content-Type: application/json`.
+
+```json
+{
+  "amount": 150000,
+  "currency": "NGN",
+  "description": "Order 1042",
+  "paymentMethod": { "type": "card", "token": "tok_visa_4242" },
+  "metadata": { "orderId": "1042" }
+}
+```
+
+**202** with `Location: /api/v1/payments/{id}`:
+
+```json
+{
+  "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "amount": 150000,
+  "currency": "NGN",
+  "status": "PENDING",
+  "description": "Order 1042",
+  "metadata": { "orderId": "1042" },
+  "paymentMethod": { "type": "card", "last4": "4242" },
+  "idempotencyKey": "order-1042-attempt-1",
+  "statusReason": null,
+  "failureReason": null,
+  "attempts": 0,
+  "version": 1,
+  "processingStartedAt": null,
+  "createdAt": "2026-10-22T22:00:00.000Z",
+  "updatedAt": "2026-10-22T22:00:00.000Z"
+}
+```
+
+`description` is optional, max 255 characters. `reason` on `PATCH` is optional, max 255.
+
+**`GET /api/v1/payments/:id`** returns the current row. A malformed id is 400. An unknown UUID is 404.
+
+**`PATCH /api/v1/payments/:id/status`** body is `{ "status": "CANCELLED" | "REFUNDED", "reason"?: string }`. Optional header `If-Match: "1"`. Success is **200** with the updated payment. Cancel from `PENDING` sets `statusReason` from `reason`. Refund from `SUCCEEDED` does the same. The worker writes `failureReason` and leaves `statusReason` null.
+
+**`GET /api/v1/payments?status=PENDING&limit=20&offset=0`** returns `{ "data": [ … ], "page": { "limit": 20, "offset": 0, "total": 0 } }`.
+
+**`GET /health/live`** returns 200 while the process is up. **`GET /health/ready`** checks the store (file readable, or `SELECT 1`) and returns 503 `NOT_READY` when the check fails. Both are outside the API key and the rate limiter. During shutdown, ready returns 503 and new API requests receive 503.
+
+Swagger security scheme is an API key in `X-Api-Key`. Request ids come from a well-formed `X-Request-Id` or a generated UUID, and the response echoes the header. Pino redacts `x-api-key`, `authorization`, `paymentMethod.token`, and the usual PAN/CVV field names.
+
+Persistence selection is `REPOSITORY_DRIVER=json|postgres|memory`. `memory` is for tests. Compose runs `postgres`.
+
+## Background processing, one pass
+
+```mermaid
+flowchart LR
+  Client --> Routes --> Controllers --> PaymentService
+  PaymentService --> Repo[(PaymentRepository)]
+  PaymentService --> Queue[JobQueue]
+  Queue --> Processor[PaymentProcessor]
+  Processor --> Repo
+  Processor --> Gateway[PaymentGateway]
+  Repo --> Json[JSON file]
+  Repo --> Pg[PostgreSQL]
+  Repo --> Mem[Memory]
+```
+
+`POST` path: one transaction inserts the payment and the idempotency row, commit, enqueue `{ paymentId, runAt }`, return the snapshot. Replay returns the snapshot and does not enqueue again.
+
+Worker path: claim as in the table, call `gateway.charge` with `AbortSignal.timeout`, then commit success, permanent failure, or retry. Concurrency is a small semaphore inside the in-process queue (default 5). A reconciler interval re-enqueues recoverable rows so a failed enqueue or an expired lease does not wait for a restart.
+
+Graceful shutdown order: mark not-ready, `server.close()`, pause the queue, drain in-flight work up to the deadline, let the JSON write mutex finish, close the Postgres pool, exit.
+
+## Implementation plan
+
+Each step is tests first, then implementation, then the command output in the transcript, then one proposed commit message. I stop after each step.
+
+1. **chore:** scaffold Node 20, TypeScript strict, ESLint, Prettier, Jest, ts-jest, `.gitignore`, `.nvmrc`, scripts for lint, format, typecheck, and test. `npm test` passes with no domain tests yet.
+2. **feat:** zod environment schema. Tests cover missing required keys, bad ports, defaults, and `API_KEYS` parsing.
+3. **feat:** state machine. Tests cover every legal edge, every illegal edge, and terminal states.
+4. **feat:** money rules and the payment aggregate. Tests cover minor units, the currency allow-list, masked `last4`, version starting at 1, and rejected tokens.
+5. **feat:** domain errors and the RFC 7807 mapper. Tests cover the status table and the absence of `stack` outside development.
+6. **feat:** repository port, memory adapter, and the shared contract suite (insert, get, version conflict, idempotency hash match and mismatch, transaction rollback, list, recoverable scan).
+7. **feat:** JSON adapter passing that contract, plus atomic-write, mutex, missing-file, and corrupt-file tests.
+8. **feat:** retry policy. Tests cover transient versus permanent, the attempt cap, and jitter bounds.
+9. **feat:** gateway port and the seeded simulator, including timeout, stable replay for the same attempt, and a scripted fake.
+10. **feat:** payment service against the memory repository and a fake queue. Create, replay, key reuse, get, list, cancel, refund, and forbidden transitions.
+11. **feat:** processor, in-process queue, and recovery. Timeout, transient-then-success, permanent decline, max attempts, terminal no-op, single winner under parallel claims, restart requeue.
+12. **feat:** shutdown coordinator. Drain completes an in-flight charge. A drained-out timeout leaves `PROCESSING` and exits cleanly.
+13. **feat:** request id, pino redaction, and the problem-details error handler, tested through supertest.
+14. **feat:** helmet, CORS allow-list, API key, content type, body size, rate limit, prototype-pollution payload.
+15. **feat:** live and ready probes, including a store that fails the ready check.
+16. **feat:** `POST` and `GET` HTTP, including the async path from 202 to a terminal status and duplicate idempotent posts creating one row.
+17. **feat:** `PATCH` HTTP and the parallel-patch concurrency test (exactly one winner).
+18. **feat:** list endpoint. Drop this step if you want it out.
+19. **feat:** OpenAPI document, `/docs`, and `openapi.json`.
+20. **feat:** PostgreSQL adapter, init SQL, compose service, contract suite against `DATABASE_URL`.
+21. **chore:** Dockerfile, docker-compose, GitHub Actions for lint, typecheck, test, coverage, and `npm audit`.
+22. **docs:** README with the sections you listed, including the assumptions above and a production follow-up note (BullMQ, vault tokens, idempotency TTL, cursor pagination, partial refunds, a real migration tool).
+23. **Review:** a written gap check against ownership, failure handling, background reliability, security, and completeness. Gaps stay listed even if they are uncomfortable.
+
+I will not claim a step is done without pasting the test command and its result.
+
+Approve this plan as written, or mark the assumptions to change. The ones most worth a yes or no are the stored idempotency snapshot (2 in the assumptions list is the cancel rule; assumption 1 is the snapshot), synchronous full refunds, `PENDING` during backoff, the list endpoint, and one combined commit per step.
+
+## 2. Proceed to implementation
 
 ### Prompt
 
@@ -34,7 +443,7 @@ Amounts are integer minor units. The store keeps `type` and `last4` only. The JS
 
 **Limits:** the queue and retry timers are in-process. A crash drops the delay, and the next boot retries immediately. The JSON adapter is safe for one process. Several processes need the PostgreSQL driver. `NODE_ENV=development` includes stack traces in problem responses; production does not.
 
-## 2. The page did not load
+## 3. The page did not load
 
 ### Prompt
 
@@ -48,7 +457,7 @@ The payment desk is served at http://127.0.0.1:43123. That address was returning
 
 Opening it shows the charge form and the ledger. The local API key is already filled in. A payment was accepted in the browser: the service was **Ready**, and the new charge settled to **SUCCEEDED**. The API reference is still at http://127.0.0.1:43123/docs/.
 
-## 3. Connection refused, and where the code lives
+## 4. Connection refused, and where the code lives
 
 ### Prompt
 
@@ -92,7 +501,7 @@ npm run dev
 
 That listens on port `4317`. With Docker installed locally, `docker compose up --build` starts the API and Postgres.
 
-## 4. How to clone the repository
+## 5. How to clone the repository
 
 ### Prompt
 
@@ -134,7 +543,7 @@ npm run dev
 
 That listens on port `4317`. The desk is at `http://127.0.0.1:4317/` and the API docs are at `http://127.0.0.1:4317/docs/`. With Docker installed, `docker compose up --build` starts the API and Postgres.
 
-## 5. Choose a review
+## 6. Choose a review
 
 ### Prompt
 
@@ -177,7 +586,7 @@ What still reaches a log or a client:
 
 **What holds.** API keys are compared as SHA-256 digests with `timingSafeEqual`, and every configured key is checked. Raw 13–19 digit card numbers are rejected. Only `type` and `last4` are stored. Postgres queries are parameterized. CORS is an allowlist. The rate limit is per API key, and `/health` is exempt. The image runs as a non-root user.
 
-## 6. Apply the review fixes
+## 7. Apply the review fixes
 
 ### Prompt
 
