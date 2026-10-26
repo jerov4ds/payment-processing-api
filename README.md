@@ -115,7 +115,8 @@ The API is published on `127.0.0.1:4317` and Postgres on `127.0.0.1:54329`. Comp
 | `CORS_ORIGINS`                   | empty                                    | Comma-separated browser origins. Empty allows no browser origin                  |
 | `BODY_LIMIT_BYTES`               | `16384`                                  | JSON body limit                                                                  |
 | `RATE_LIMIT_WINDOW_MS`           | `60000`                                  | Rate-limit window                                                                |
-| `RATE_LIMIT_MAX`                 | `100`                                    | Requests per window, keyed by API key                                            |
+| `RATE_LIMIT_MAX`                 | `100`                                    | API requests per window, per authenticated client                                |
+| `AUTH_FAILURE_RATE_LIMIT_MAX`    | `20`                                     | Failed API key attempts per window, per client address                           |
 | `GATEWAY_MIN_LATENCY_MS`         | `20`                                     | Simulated latency floor                                                          |
 | `GATEWAY_MAX_LATENCY_MS`         | `50`                                     | Simulated latency ceiling                                                        |
 | `GATEWAY_TIMEOUT_MS`             | `2000`                                   | Gateway call timeout                                                             |
@@ -229,7 +230,7 @@ Coverage includes the state machine, idempotency, optimistic locking, gateway ti
 - JSON bodies are size-limited. `POST` and `PATCH` require `application/json`.
 - Unknown fields are stripped before the idempotency hash is computed, so a retry that drops an ignored field still matches. A typo in a field name is therefore ignored rather than rejected.
 - Metadata is at most 20 keys, each matching `^[A-Za-z0-9_.-]{1,64}$`, with string, integer, or boolean values. `__proto__`, `constructor`, and `prototype` are rejected.
-- Rate limiting is in memory, keyed by a hash of the API key. Health probes are exempt. A second instance needs a shared store.
+- Rate limiting is in memory and applies to `/api`. Before authentication, an address that sends more than `AUTH_FAILURE_RATE_LIMIT_MAX` bad keys in a window gets 429, whichever keys it tries. After authentication, each client has `RATE_LIMIT_MAX` requests per window. Health probes are exempt. A second instance needs a shared store.
 - Pino redacts `x-api-key`, `authorization`, `idempotency-key`, payment-method tokens, and PAN/CVV field names. Unexpected failures are logged with the error and are not copied into the HTTP body.
 - `npm audit --audit-level=high` is part of CI.
 

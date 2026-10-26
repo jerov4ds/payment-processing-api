@@ -82,6 +82,26 @@ describe("HTTP security edge", () => {
     expect(health.status).toBe(200);
   });
 
+  it("limits failed API key guesses by address, whatever key is sent", async () => {
+    const { app, apiKey } = await createTestApp({
+      env: { AUTH_FAILURE_RATE_LIMIT_MAX: "3" },
+    });
+    for (let index = 0; index < 5; index += 1) {
+      const allowed = await request(app)
+        .get("/api/v1/payments")
+        .set("X-Api-Key", apiKey);
+      expect(allowed.status).toBe(200);
+    }
+    const statuses: number[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      const guess = await request(app)
+        .get("/api/v1/payments")
+        .set("X-Api-Key", `guess-${index}-key`);
+      statuses.push(guess.status);
+    }
+    expect(statuses).toEqual([401, 401, 401, 429, 429]);
+  });
+
   it("hides another client's payments", async () => {
     const { app, apiKey } = await createTestApp();
     const created = await request(app)

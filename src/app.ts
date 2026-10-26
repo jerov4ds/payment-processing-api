@@ -10,7 +10,10 @@ import { buildOpenApiSpec } from "./openapi/spec";
 import { apiKeyAuth } from "./middleware/auth";
 import { denyFraming } from "./middleware/frame-guard";
 import { errorHandler } from "./middleware/error-handler";
-import { createRateLimiter } from "./middleware/rate-limit";
+import {
+  createAuthFailureLimiter,
+  createClientRateLimiter,
+} from "./middleware/rate-limit";
 import { requestId } from "./middleware/request-id";
 import { requireJson } from "./middleware/require-json";
 import {
@@ -65,11 +68,12 @@ export function createApp(deps: AppDependencies): Express {
       maxAge: 600,
     }),
   );
-  app.use(createRateLimiter(deps.env));
+  app.use("/api", createAuthFailureLimiter(deps.env));
   app.use(requireJson);
   app.use(express.json({ limit: deps.env.bodyLimitBytes, strict: true }));
   app.use("/health", healthRouter(deps.repository, deps.readiness));
   app.use("/api", apiKeyAuth(deps.env.apiClients));
+  app.use("/api", createClientRateLimiter(deps.env));
   app.use("/api/v1", paymentRouter(deps.paymentService));
   app.use(consoleRouter());
   app.use(docsRouter(buildOpenApiSpec()));

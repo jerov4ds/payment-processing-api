@@ -21,6 +21,7 @@ const envSchema = z
     BODY_LIMIT_BYTES: z.coerce.number().int().positive().default(16_384),
     RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
     RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
+    AUTH_FAILURE_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(20),
     GATEWAY_MIN_LATENCY_MS: z.coerce.number().int().nonnegative().default(20),
     GATEWAY_MAX_LATENCY_MS: z.coerce.number().int().nonnegative().default(50),
     GATEWAY_TIMEOUT_MS: z.coerce.number().int().positive().default(2_000),
@@ -93,6 +94,7 @@ export interface Env {
   bodyLimitBytes: number;
   rateLimitWindowMs: number;
   rateLimitMax: number;
+  authFailureRateLimitMax: number;
   gatewayMinLatencyMs: number;
   gatewayMaxLatencyMs: number;
   gatewayTimeoutMs: number;
@@ -142,6 +144,7 @@ export function loadEnv(source: NodeJS.ProcessEnv): Env {
     bodyLimitBytes: data.BODY_LIMIT_BYTES,
     rateLimitWindowMs: data.RATE_LIMIT_WINDOW_MS,
     rateLimitMax: data.RATE_LIMIT_MAX,
+    authFailureRateLimitMax: data.AUTH_FAILURE_RATE_LIMIT_MAX,
     gatewayMinLatencyMs: data.GATEWAY_MIN_LATENCY_MS,
     gatewayMaxLatencyMs: data.GATEWAY_MAX_LATENCY_MS,
     gatewayTimeoutMs: data.GATEWAY_TIMEOUT_MS,
