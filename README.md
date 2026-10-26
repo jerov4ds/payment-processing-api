@@ -53,12 +53,13 @@ While a retry is waiting, the row returns to `PENDING`, so a client can still ca
 1. `POST` inserts the payment and the idempotency record in one transaction, then enqueues a job, then returns **202** with the original `PENDING` snapshot.
 2. The payment row is the source of truth. If enqueue fails, the response is still 202 and the reconciler picks the row up.
 3. A worker claims `PENDING` by moving it to `PROCESSING`, incrementing `attempts` and `version`, and setting `processingStartedAt`. The gateway call happens outside the transaction.
-4. A transient failure (`GATEWAY_TIMEOUT`, `GATEWAY_UNAVAILABLE`, or an unknown gateway error) releases the row to `PENDING` and schedules a delay when attempts remain. A permanent `PAYMENT_DECLINED` fails immediately.
+4. A transient failure (`GATEWAY_TIMEOUT`, `GATEWAY_UNAVAILABLE`, or an unknown gateway error) releases the row to `PENDING` with `nextAttemptAt` set to the end of the backoff delay, and schedules a job for that time, when attempts remain. A permanent `PAYMENT_DECLINED` fails immediately.
 5. Equal jitter: `exp = min(cap, base * 2^(attempt-1))`, delay is in `[exp/2, exp]`.
 6. A job for a payment that is not `PENDING` or a stale `PROCESSING` row is a no-op.
-7. On startup, and on a timer, every `PENDING` payment and every `PROCESSING` payment whose lease has expired is enqueued. Reclaiming a lease does not increment `attempts`. The simulated gateway is a pure function of `(seed, paymentId, attempt)`, so a replayed attempt returns the same decision.
-8. The in-process queue caps concurrency (default 5). The delay lives in memory. A crash during backoff loses the timer and the next boot retries immediately.
-9. Shutdown stops new HTTP work, pauses the queue, waits up to `SHUTDOWN_DRAIN_MS` for in-flight gateway calls, flushes storage, and exits 0. A charge that is still running stays `PROCESSING` for the next process.
+7. On startup, and on a timer, every `PENDING` payment whose `nextAttemptAt` is unset or past, and every `PROCESSING` payment whose lease has expired, is enqueued. A payment waiting out its backoff is left alone. Reclaiming a lease does not increment `attempts`. The simulated gateway is a pure function of `(seed, paymentId, attempt)`, so a replayed attempt returns the same decision.
+8. The in-process queue caps concurrency (default 5) and holds at most one waiting job per payment, so the timer and the reconciler cannot pile up duplicates. The delay is stored on the payment, so a crash during backoff does not shorten it: the next boot picks the payment up when it is due.
+9. An uncaught exception or unhandled rejection is logged as fatal and the process exits 1. Its `PROCESSING` rows are reclaimed by the next process when their leases expire.
+10. Shutdown stops new HTTP work, pauses the queue, waits up to `SHUTDOWN_DRAIN_MS` for in-flight gateway calls, flushes storage, and exits 0. A charge that is still running stays `PROCESSING` for the next process.
 
 A multi-instance deployment would replace `InProcessJobQueue` with BullMQ (or another durable queue) behind the same `JobQueue` port. Redis is not included.
 
@@ -249,12 +250,12 @@ The memory adapter is what unit and HTTP tests use. It implements the same contr
 1. Idempotency replay returns the stored 202 snapshot, not the live payment. Clients read `GET` for the current status. Records are kept for the life of the store. A TTL is deferred.
 2. The idempotency hash is SHA-256 of the canonical validated body, including the payment-method token. Unknown fields are stripped first, so they do not change the hash. The key is scoped by API client id.
 3. Refunds are synchronous and full. Partial refunds and an async refund state are deferred.
-4. Backoff returns the payment to `PENDING`. The delay is not durable across a crash. Recovery retries immediately.
+4. Backoff returns the payment to `PENDING` with a stored `nextAttemptAt`. The timer is in memory, but the reconciler re-enqueues the payment once it is due, including after a restart.
 5. Gateway outcomes are `f(seed, paymentId, attempt)`. Reclaiming a crashed attempt reuses the attempt number, so the decision is stable. The raw token is not stored, which means a real gateway could not be retried after a restart without a vault reference. The simulator does not need the token.
 6. A missing JSON file is created when its directory exists. A corrupt file aborts startup. The directory itself is not created, so a bad path cannot silently write somewhere new.
 7. `If-Match` is optional. The server always uses `version`. Missing `If-Match` is not 428.
 8. Only 2-decimal currencies are accepted. The maximum amount stays inside `Number.MAX_SAFE_INTEGER`.
-9. Extra public fields: `paymentMethod`, `statusReason`, `processingStartedAt`. API client id and the request hash stay internal.
+9. Extra public fields: `paymentMethod`, `statusReason`, `processingStartedAt`, `nextAttemptAt`. API client id and the request hash stay internal.
 10. `GET /api/v1/payments` is in scope. Cursor pagination is deferred. The JSON adapter answers the page with a full scan.
 11. Jitter uses a seeded mulberry32 so tests and the simulator are repeatable. Production jitter should use `crypto.randomInt`.
 12. Shutdown exits 0 after the drain deadline so a supervisor does not crash-loop. Leftover `PROCESSING` rows are recovered on the next boot.
@@ -263,7 +264,7 @@ The memory adapter is what unit and HTTP tests use. It implements the same contr
 
 ## What I would do next for production
 
-- Put the queue on BullMQ/Redis so delays and leases survive a crash and more than one instance can run.
+- Put the queue on BullMQ/Redis so more than one instance can run.
 - Store a vault token reference instead of discarding the token after validation.
 - Expire idempotency keys, and paginate with a cursor.
 - Replace the startup SQL script with a real migration tool.
