@@ -608,6 +608,120 @@ The security fixes are on `main`. In the local clone, run `git pull` and restart
 
 110 tests passed, including a second client being refused and a development error that does not return its stack.
 
+## 8. Review against the brief
+
+### Prompt
+
+```text
+This repository contains a technical test I am taking. I have completed the assessment but I need you to help review the implementation to ensure nothing has been left out and I get a good score.
+Here is the assessment instructions and questions
+
+Hello Jeremiah,
+
+Following your interview, please find the attached assessment for the Node.js + React Developer role.
+
+You may begin today, and we would like you to use the next few days to complete it thoroughly. Kindly submit your finished work by 11:00 AM EST on Tuesday, 27 October 2026.
+
+As part of the assessment, we want to evaluate not only your ability to implement a solution but also your approach to problem-solving, code quality, security, and handling potential failures.
+
+Please pay particular attention to the following:
+
+Ownership and problem-solving: Demonstrate your ability to take ownership of the task, make sound technical decisions, and deliver a complete, reliable solution.
+Failure handling: Identify potential points of failure and demonstrate how you would handle errors and unexpected scenarios.
+Background processing: Where applicable, consider the reliability and appropriate handling of background tasks.
+Security and code quality: Follow secure coding practices and ensure your solution is maintainable, well-structured, and free of critical bugs.
+Project completeness: Treat the assessment as a real-world project, paying attention to implementation details, edge cases, and overall solution quality.
+Assessment link:
+https://docs.google.com/spreadsheets/d/1SEoqnKuXaicyJmv8UTUvD-rdZ1wcXxcTZ07yjYdjH4I/edit?hl=en-GB&gid=0#gid=0
+
+Your submission should include:
+
+Your completed assessment, including all relevant source files.
+A full transcript of your AI-assisted work, including the prompts you used and the AI's responses. A list of prompts alone is not sufficient.
+Your incremental Git commit history, showing how your solution evolved throughout the assessment.
+Please ensure that you thoroughly review and validate any AI-generated output before incorporating it into your solution. You remain responsible for the correctness, security, and production readiness of your final submission.
+
+Node.js Microservice – Payment Processing Simulation
+Overview:
+Create a Node.js microservice that simulates payment processing. This service will expose a RESTful API for creating, retrieving, and updating payment statuses.
+Objectives:
+
+Showcase your ability to build a robust microservice using Node.js and Express.
+Emphasize error handling and logging.
+Demonstrate asynchronous programming concepts in a realistic setting.
+
+Requirements:
+
+Set up an Express server with endpoints for:
+Creating a payment (POST).
+Retrieving payment information by ID (GET).
+Updating the status of a payment (PUT/PATCH).
+Simulate payment processing logic with asynchronous operations.
+Provide in-memory or file-based (JSON) persistence for simplicity.
+Implement proper error responses (e.g., invalid input or service errors).
+Include unit tests and basic API documentation (Swagger or markdown).
+
+Deliverables:
+
+Source code in a Git repository.
+README with setup instructions, API details, and testing instructions.
+Test scripts demonstrating your testing approach (e.g., using Mocha/Chai or Jest).
+
+Submission Guidelines:
+
+Provide a repository URL.
+Instructions must clearly describe how to run the service locally.
+```
+
+### Response
+
+The assistant read the source, ran typecheck, lint, Prettier, and the suite (136 passing, 100% coverage on domain and services), and confirmed each suspected bug with a throwaway test before reporting it. The throwaway tests were deleted afterwards.
+
+Every listed requirement is covered. Typecheck, lint, Prettier and all 136 tests pass. There are three real bugs, each confirmed with a throwaway test, and two of them sit in exactly the areas the reviewers said they'd look hardest at: failure handling and background processing.
+
+| Requirement                                                                     | Status                                                                                                     |
+| ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Express endpoints for create (POST), get by ID (GET), update status (PUT/PATCH) | ✅ `POST /api/v1/payments`, `GET /payments/:id`, `PATCH /payments/:id/status`, plus a list endpoint        |
+| Async payment processing                                                        | ✅ Background worker, simulated gateway, retry with backoff, recovery of stuck payments, graceful shutdown |
+| In-memory or JSON persistence                                                   | ✅ Both, plus Postgres                                                                                     |
+| Proper error responses                                                          | ✅ Standard JSON problem responses (RFC 7807) with request IDs, never a stack trace                        |
+| Unit tests                                                                      | ✅ Jest: 136 tests, 100% coverage on domain and services                                                   |
+| API docs                                                                        | ✅ Swagger at `/docs`, `openapi.json`, README                                                              |
+| README with setup, API details and testing                                      | ✅ Thorough, including assumptions and trade-offs                                                          |
+
+**1. The JSON and memory stores can lose a payment the API already accepted.** `txDepth` is one counter for the whole store, not one per transaction. While transaction A is awaiting its file write, any other request's transaction sees `txDepth > 0`, treats itself as nested and skips both the lock and the save. Reproduced: two concurrent creates both returned success, but only one payment was in the file on disk; and when A rolled back, it also erased B's payment, which B had already committed. The existing "concurrent inserts" test misses this because each insert runs as its own top-level call.
+
+**2. The reconciler skips retry backoff and keeps adding duplicate jobs.** `recover()` runs every second and queues every `PENDING` payment to run immediately. A payment waiting out a retry delay is also `PENDING`, so a 2s backoff became "now", and a second job was added for the same payment. In production each pending payment gains a job per second, so the queue keeps growing whenever the workers fall behind.
+
+**3. Guessing API keys is never rate limited.** The limiter runs before authentication and buckets requests by the raw `X-Api-Key` header. With a limit of 3, 20 different wrong keys all got 401s; none was blocked.
+
+Smaller hardening items: config doesn't check that `PROCESSING_LEASE_MS` is greater than `GATEWAY_TIMEOUT_MS`, so if it's set lower, recovery can take back a payment while its charge is still in flight and charge it twice. There's no `unhandledRejection` or `uncaughtException` handler in `index.ts`.
+
+Submission risks besides the code: commit `b6dfebb` adds 85 files in one go, while the brief asks for incremental history. Don't rewrite history to fake steps; making each fix its own commit shows real iteration from here on. The response to "proceed to implementation" in this file is a short summary rather than the actual exchange, so the raw transcript of that session should be included if it can be exported.
+
+The assistant offered to fix the three bugs and the two smaller items, one commit each with a test that fails first, then update the README and add this session to the transcript.
+
+## 9. Apply the review fixes
+
+### Prompt
+
+```text
+Yes please
+```
+
+### Response
+
+The assistant worked on a `review-fixes` branch, writing a failing test for each change before the fix and running the full suite after each one.
+
+1. **Transaction isolation** (`5a0c515`). A new repository contract test (an earlier transaction rolls back after a later one commits) and a JSON test that checks the file on disk after staggered writes both failed against the old stores. Every transaction now holds the store's mutex and receives its own handle (`transactionView` in `store-support.ts`), and the store's own methods always take the lock. Two service tests that stubbed the store and relied on the handle being the store itself were updated to say so explicitly.
+2. **Durable retry delay** (`e5e8138`). A released retry records `nextAttemptAt`; recovery skips a `PENDING` payment until it is due; the in-process queue holds one waiting job per payment and keeps the earliest run time. Postgres gets a `next_attempt_at` column through the startup migration; older JSON files load with it as `null`. `openapi.json` was regenerated.
+3. **Key-guess rate limit** (`0aa5c38`, `4ec12b8`, `2f66834`). The first version counted 401s per address before authentication. An automated security review then flagged that it locked out valid keys on the same address and left pages outside `/api` unlimited. The second version split authentication into `identifyClient` and `requireClient`, moved it before body parsing, exempted verified keys from the failure limiter, and restored a per-address limiter for other pages. A second automated review flagged that exempting verified keys lets a blocked address tell a correct guess (200) from a wrong one (429), so guessing was never slowed. The final version keeps verified requests out of the count, but blocks an address that is over the limit for every key until the window resets. The README states the cost: clients sharing an address with a guesser are blocked with it. A third automated review flagged that lockout and suggested exempting verified clients again; that was declined because it reopens the correct-guess signal, and per-key buckets or delays do not close it either.
+4. **Lease longer than the gateway timeout** (`8328044`). Startup rejects `PROCESSING_LEASE_MS <= GATEWAY_TIMEOUT_MS`.
+5. **Crash handlers** (`e7c8982`). `installCrashHandlers` logs an uncaught exception or unhandled rejection as fatal and exits 1; it is unit tested and wired into `index.ts`.
+6. **README** (`68e2acc`). The background-processing section and the assumptions now describe the stored delay, the one-job-per-payment queue, and the crash behavior.
+
+**Checks:** 151 tests pass with the memory and JSON stores, and 162 pass with `DATABASE_URL` set against PostgreSQL 16 in Docker. Domain and services stay at 100% coverage. Typecheck, ESLint, and Prettier are clean. The migration was applied from `main`'s schema and then twice more to confirm it upgrades an existing database and can be re-run. A smoke test of the built server (JSON store, 60% transient gateway failures, reconciler every 200 ms) showed a failed payment waiting out its delay and retrying on schedule, 429 after 20 bad keys, and a clean shutdown drain.
+
 ## HTTP requests and responses
 
 These calls were made against the service on this agent. Amounts are minor units. The demo key below is the local example key from `.env.example`.
