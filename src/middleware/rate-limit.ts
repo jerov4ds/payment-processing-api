@@ -9,6 +9,8 @@ function limiter(
     limit: number;
     keyGenerator: (req: Request) => string;
     skip?: (req: Request) => boolean;
+    skipSuccessfulRequests?: boolean;
+    requestWasSuccessful?: (req: Request) => boolean;
   },
 ): RequestHandler {
   return rateLimit({
@@ -43,14 +45,17 @@ export function createAddressRateLimiter(env: Env): RequestHandler {
 
 /**
  * Sits between `identifyClient` and `requireClient`. Only requests whose key
- * did not verify are counted or blocked, so guessing keys from an address is
- * throttled but a valid client on the same address is not.
+ * did not verify count toward the limit, so a working client never trips it.
+ * Once an address is over, every request from it is refused until the window
+ * resets, including one with a valid key, so a correct guess looks the same
+ * as a wrong one.
  */
 export function createAuthFailureLimiter(env: Env): RequestHandler {
   return limiter(env, {
     limit: env.authFailureRateLimitMax,
     keyGenerator: address,
-    skip: (req) => Boolean(req.clientId),
+    skipSuccessfulRequests: true,
+    requestWasSuccessful: (req) => Boolean(req.clientId),
   });
 }
 

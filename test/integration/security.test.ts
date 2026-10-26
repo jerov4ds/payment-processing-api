@@ -100,10 +100,11 @@ describe("HTTP security edge", () => {
       statuses.push(guess.status);
     }
     expect(statuses).toEqual([401, 401, 401, 429, 429]);
-    const stillAllowed = await request(app)
+    // A blocked address learns nothing from a correct guess.
+    const blocked = await request(app)
       .get("/api/v1/payments")
       .set("X-Api-Key", apiKey);
-    expect(stillAllowed.status).toBe(200);
+    expect(blocked.status).toBe(429);
   });
 
   it("rejects a bad key before reading the request body", async () => {
