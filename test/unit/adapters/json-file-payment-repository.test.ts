@@ -184,4 +184,42 @@ describe("json file payment repository", () => {
     expect(page.total).toBe(20);
     await rm(directory, { recursive: true, force: true });
   });
+
+  it("writes a transaction to disk when it starts during another's write", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "payments-staggered-"),
+    );
+    const filePath = path.join(directory, "payments.json");
+    const repo = new JsonFilePaymentRepository(filePath, createMockLogger());
+    await repo.init();
+    const insertOne = (index: number): Promise<void> => {
+      const payment = samplePayment({
+        id: `3fa85f64-5717-4562-b3fc-2c963f66b${index.toString(16).padStart(3, "0")}`,
+        idempotencyKey: `staggered-${index}`,
+      });
+      return repo.withTransaction(async (tx) => {
+        await tx.insert(payment, {
+          clientId: "demo",
+          key: payment.idempotencyKey,
+          requestHash: "hash",
+          paymentId: payment.id,
+          responseStatus: 202,
+          responseBody: payment,
+          createdAt: payment.createdAt,
+        });
+      });
+    };
+    const writes: Promise<void>[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      writes.push(insertOne(index));
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    await Promise.all(writes);
+    const onDisk = JSON.parse(await readFile(filePath, "utf8")) as {
+      payments: unknown[];
+    };
+    expect(onDisk.payments).toHaveLength(5);
+    await repo.close();
+    await rm(directory, { recursive: true, force: true });
+  });
 });

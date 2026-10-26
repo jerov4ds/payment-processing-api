@@ -195,6 +195,7 @@ describe("payment service", () => {
     repository.insert = async () => {
       throw new IdempotencyKeyExistsError("demo", "order-1042-key");
     };
+    repository.withTransaction = (work) => work(repository);
     const racing = new PaymentService({
       repository,
       queue: new RecordingQueue(),
@@ -265,6 +266,7 @@ describe("payment service", () => {
     repository.insert = async () => {
       throw new IdempotencyKeyExistsError("demo", "order-1042-key");
     };
+    repository.withTransaction = (work) => work(repository);
     const racing = new PaymentService({
       repository,
       queue: new RecordingQueue(),

@@ -65,6 +65,27 @@ export function paymentRepositoryContract(
       ).toBeNull();
     });
 
+    it("keeps a commit made while an earlier transaction is still open", async () => {
+      const first = samplePayment();
+      const second = samplePayment({
+        id: OTHER_PAYMENT_ID,
+        idempotencyKey: "second-key",
+      });
+      const opened = repo.withTransaction(async (tx) => {
+        await tx.insert(first, idempotencyFor(first));
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        throw new Error("first fails");
+      });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const committed = repo.withTransaction(async (tx) => {
+        await tx.insert(second, idempotencyFor(second));
+      });
+      await expect(opened).rejects.toThrow("first fails");
+      await committed;
+      expect(await repo.findById(first.id)).toBeNull();
+      expect(await repo.findById(second.id)).toEqual(second);
+    });
+
     it("rejects a duplicate idempotency key", async () => {
       const first = samplePayment();
       const second = samplePayment({

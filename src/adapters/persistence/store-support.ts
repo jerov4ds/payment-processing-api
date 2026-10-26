@@ -8,6 +8,7 @@ import type {
   IdempotencyRecord,
   ListPaymentsQuery,
   ListPaymentsResult,
+  PaymentRepository,
 } from "../../repositories/payment-repository";
 
 export interface StoreSnapshot {
@@ -143,6 +144,36 @@ export function findIdempotency(
     (existing) => existing.clientId === clientId && existing.key === key,
   );
   return record ? cloneState(record) : null;
+}
+
+/**
+ * The handle a transaction callback receives. It reads and writes the state
+ * directly because the caller already holds the store's mutex. Nested
+ * `withTransaction` calls join the open transaction.
+ */
+export function transactionView(
+  state: () => StoreSnapshot,
+  owner: Pick<PaymentRepository, "ping" | "close">,
+): PaymentRepository {
+  const view: PaymentRepository = {
+    withTransaction: (work) => work(view),
+    insert: (payment, idempotency) => {
+      insertInto(state(), payment, idempotency);
+      return Promise.resolve();
+    },
+    findById: (id) => Promise.resolve(findPayment(state(), id)),
+    findByIdForUpdate: (id) => Promise.resolve(findPayment(state(), id)),
+    findByIdempotencyKey: (clientId, key) =>
+      Promise.resolve(findIdempotency(state(), clientId, key)),
+    update: (payment, expectedVersion) =>
+      Promise.resolve(updateIn(state(), payment, expectedVersion)),
+    list: (query) => Promise.resolve(listFrom(state(), query)),
+    listRecoverable: (nowIso, leaseMs) =>
+      Promise.resolve(recoverableFrom(state(), nowIso, leaseMs)),
+    ping: () => owner.ping(),
+    close: () => owner.close(),
+  };
+  return view;
 }
 
 export function emptySnapshot(): StoreSnapshot {

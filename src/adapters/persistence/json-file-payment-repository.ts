@@ -26,10 +26,9 @@ import {
   emptySnapshot,
   findIdempotency,
   findPayment,
-  insertInto,
   listFrom,
   recoverableFrom,
-  updateIn,
+  transactionView,
   type StoreSnapshot,
 } from "./store-support";
 
@@ -88,7 +87,7 @@ export class JsonFilePaymentRepository implements PaymentRepository {
     ...emptySnapshot(),
   };
   private readonly mutex = new Mutex();
-  private txDepth = 0;
+  private readonly tx = transactionView(() => this.document, this);
   private ready = false;
 
   constructor(
@@ -148,35 +147,21 @@ export class JsonFilePaymentRepository implements PaymentRepository {
     work: (tx: PaymentRepository) => Promise<T>,
   ): Promise<T> {
     this.assertReady();
-    if (this.txDepth > 0) {
-      return work(this);
-    }
     return this.mutex.run(async () => {
       const snapshot = cloneState(this.document);
-      this.txDepth += 1;
       try {
-        const result = await work(this);
+        const result = await work(this.tx);
         await this.persist();
         return result;
       } catch (error) {
         this.document = snapshot;
         throw error;
-      } finally {
-        this.txDepth -= 1;
       }
     });
   }
 
-  async insert(
-    payment: Payment,
-    idempotency: IdempotencyRecord,
-  ): Promise<void> {
-    await this.exclusive(async () => {
-      insertInto(this.snapshot(), payment, idempotency);
-      if (this.txDepth === 0) {
-        await this.persist();
-      }
-    });
+  insert(payment: Payment, idempotency: IdempotencyRecord): Promise<void> {
+    return this.withTransaction((tx) => tx.insert(payment, idempotency));
   }
 
   findById(id: string): Promise<Payment | null> {
@@ -196,14 +181,8 @@ export class JsonFilePaymentRepository implements PaymentRepository {
     );
   }
 
-  async update(payment: Payment, expectedVersion: number): Promise<Payment> {
-    return this.exclusive(async () => {
-      const updated = updateIn(this.snapshot(), payment, expectedVersion);
-      if (this.txDepth === 0) {
-        await this.persist();
-      }
-      return updated;
-    });
+  update(payment: Payment, expectedVersion: number): Promise<Payment> {
+    return this.withTransaction((tx) => tx.update(payment, expectedVersion));
   }
 
   list(query: ListPaymentsQuery): Promise<ListPaymentsResult> {
@@ -243,9 +222,6 @@ export class JsonFilePaymentRepository implements PaymentRepository {
 
   private exclusive<T>(operation: () => Promise<T> | T): Promise<T> {
     this.assertReady();
-    if (this.txDepth > 0) {
-      return Promise.resolve(operation());
-    }
     return this.mutex.run(() => Promise.resolve(operation()));
   }
 

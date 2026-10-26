@@ -13,6 +13,7 @@ import {
   insertInto,
   listFrom,
   recoverableFrom,
+  transactionView,
   updateIn,
   type StoreSnapshot,
 } from "./store-support";
@@ -21,24 +22,18 @@ import { Mutex } from "./mutex";
 export class MemoryPaymentRepository implements PaymentRepository {
   private state: StoreSnapshot = emptySnapshot();
   private readonly mutex = new Mutex();
-  private txDepth = 0;
+  private readonly tx = transactionView(() => this.state, this);
 
   async withTransaction<T>(
     work: (tx: PaymentRepository) => Promise<T>,
   ): Promise<T> {
-    if (this.txDepth > 0) {
-      return work(this);
-    }
     return this.mutex.run(async () => {
       const snapshot = cloneState(this.state);
-      this.txDepth += 1;
       try {
-        return await work(this);
+        return await work(this.tx);
       } catch (error) {
         this.state = snapshot;
         throw error;
-      } finally {
-        this.txDepth -= 1;
       }
     });
   }
@@ -88,9 +83,6 @@ export class MemoryPaymentRepository implements PaymentRepository {
   }
 
   private exclusive<T>(operation: () => T): Promise<T> {
-    if (this.txDepth > 0) {
-      return Promise.resolve(operation());
-    }
     return this.mutex.run(() => Promise.resolve(operation()));
   }
 }
