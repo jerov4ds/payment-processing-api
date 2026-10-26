@@ -101,14 +101,6 @@ export class PaymentProcessor {
         );
         return;
       }
-      const released = await this.commit(
-        claimed.id,
-        claimed.version,
-        (current, now) => releaseForRetry(current, now),
-      );
-      if (!released) {
-        return;
-      }
       const delay = computeBackoffMs(
         claimed.attempts,
         {
@@ -118,6 +110,14 @@ export class PaymentProcessor {
         this.deps.random,
       );
       const runAt = new Date(this.deps.clock.now().getTime() + delay);
+      const released = await this.commit(
+        claimed.id,
+        claimed.version,
+        (current, now) => releaseForRetry(current, now, runAt),
+      );
+      if (!released) {
+        return;
+      }
       this.deps.queue.enqueue({ paymentId, runAt });
     }
   }

@@ -117,7 +117,10 @@ export function isRecoverable(
   leaseMs: number,
 ): boolean {
   if (payment.status === "PENDING") {
-    return true;
+    return (
+      payment.nextAttemptAt === null ||
+      Date.parse(payment.nextAttemptAt) <= now.getTime()
+    );
   }
   return leaseExpired(payment, now, leaseMs);
 }

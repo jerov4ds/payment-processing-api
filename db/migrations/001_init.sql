@@ -45,3 +45,5 @@ ALTER TABLE payments ALTER COLUMN api_client_id SET NOT NULL;
 
 CREATE INDEX IF NOT EXISTS payments_client_created_idx
   ON payments (api_client_id, created_at DESC, id);
+
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ;

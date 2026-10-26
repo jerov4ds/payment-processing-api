@@ -37,6 +37,7 @@ interface PaymentRow extends QueryResultRow {
   attempts: number;
   version: number;
   processing_started_at: Date | string | null;
+  next_attempt_at: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -96,11 +97,12 @@ export class PostgresPaymentRepository implements PaymentRepository {
         `INSERT INTO payments (
            id, api_client_id, amount, currency, status, description, metadata,
            idempotency_key, payment_method, status_reason, failure_reason,
-           attempts, version, processing_started_at, created_at, updated_at
+           attempts, version, processing_started_at, next_attempt_at,
+           created_at, updated_at
          ) VALUES (
            $1, $2, $3, $4, $5, $6, $7::jsonb,
            $8, $9::jsonb, $10, $11,
-           $12, $13, $14, $15, $16
+           $12, $13, $14, $15, $16, $17
          )`,
         paymentParams(payment),
       );
@@ -176,8 +178,9 @@ export class PostgresPaymentRepository implements PaymentRepository {
          attempts = $10,
          version = $11,
          processing_started_at = $12,
-         updated_at = $13
-       WHERE id = $14 AND version = $15 AND api_client_id = $16
+         next_attempt_at = $13,
+         updated_at = $14
+       WHERE id = $15 AND version = $16 AND api_client_id = $17
        RETURNING *`,
       [
         payment.amount,
@@ -194,6 +197,7 @@ export class PostgresPaymentRepository implements PaymentRepository {
         payment.processingStartedAt
           ? new Date(payment.processingStartedAt)
           : null,
+        payment.nextAttemptAt ? new Date(payment.nextAttemptAt) : null,
         new Date(payment.updatedAt),
         payment.id,
         expectedVersion,
@@ -238,15 +242,19 @@ export class PostgresPaymentRepository implements PaymentRepository {
   }
 
   async listRecoverable(nowIso: string, leaseMs: number): Promise<Payment[]> {
-    const cutoff = new Date(Date.parse(nowIso) - leaseMs);
+    const now = new Date(nowIso);
+    const cutoff = new Date(now.getTime() - leaseMs);
     const rows = await this.query<PaymentRow>(
       `SELECT * FROM payments
-       WHERE status = 'PENDING'
+       WHERE (
+            status = 'PENDING'
+            AND (next_attempt_at IS NULL OR next_attempt_at <= $2)
+          )
           OR (
             status = 'PROCESSING'
             AND (processing_started_at IS NULL OR processing_started_at <= $1)
           )`,
-      [cutoff],
+      [cutoff, now],
     );
     return rows.rows.map((row) => mapRequiredPayment(row));
   }
@@ -287,6 +295,7 @@ function paymentParams(payment: Payment): unknown[] {
     payment.attempts,
     payment.version,
     payment.processingStartedAt ? new Date(payment.processingStartedAt) : null,
+    payment.nextAttemptAt ? new Date(payment.nextAttemptAt) : null,
     new Date(payment.createdAt),
     new Date(payment.updatedAt),
   ];
@@ -339,6 +348,7 @@ function mapRequiredPayment(row: PaymentRow): Payment {
     attempts: row.attempts,
     version: row.version,
     processingStartedAt: toIso(row.processing_started_at),
+    nextAttemptAt: toIso(row.next_attempt_at),
     createdAt: toIsoRequired(row.created_at),
     updatedAt: toIsoRequired(row.updated_at),
   };

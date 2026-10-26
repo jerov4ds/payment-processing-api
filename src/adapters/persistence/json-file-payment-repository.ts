@@ -55,6 +55,7 @@ const paymentSchema = z.object({
   attempts: z.number().int().nonnegative(),
   version: z.number().int().positive(),
   processingStartedAt: z.string().nullable(),
+  nextAttemptAt: z.string().nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

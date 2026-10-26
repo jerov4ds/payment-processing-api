@@ -340,6 +340,22 @@ export function paymentRepositoryContract(
       );
     });
 
+    it("leaves a pending retry out of recovery until it is due", async () => {
+      const waiting = samplePayment({
+        idempotencyKey: "waiting-retry",
+        attempts: 1,
+        nextAttemptAt: "2026-01-15T12:00:05.000Z",
+      });
+      await repo.withTransaction(async (tx) => {
+        await tx.insert(waiting, idempotencyFor(waiting));
+      });
+      expect(
+        await repo.listRecoverable("2026-01-15T12:00:04.999Z", 5_000),
+      ).toEqual([]);
+      const due = await repo.listRecoverable("2026-01-15T12:00:05.000Z", 5_000);
+      expect(due).toEqual([waiting]);
+    });
+
     it("answers ping", async () => {
       await expect(repo.ping()).resolves.toBeUndefined();
     });

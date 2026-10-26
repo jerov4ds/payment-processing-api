@@ -21,8 +21,17 @@ export class InProcessJobQueue implements JobQueue {
     private readonly onError: (error: unknown, paymentId: string) => void,
   ) {}
 
+  /** A payment has at most one waiting job. A second enqueue keeps the earlier runAt. */
   enqueue(job: QueueJob): void {
-    this.jobs.push({ paymentId: job.paymentId, runAtMs: job.runAt.getTime() });
+    const runAtMs = job.runAt.getTime();
+    const waiting = this.jobs.find(
+      (existing) => existing.paymentId === job.paymentId,
+    );
+    if (waiting) {
+      waiting.runAtMs = Math.min(waiting.runAtMs, runAtMs);
+    } else {
+      this.jobs.push({ paymentId: job.paymentId, runAtMs });
+    }
     this.kick();
   }
 

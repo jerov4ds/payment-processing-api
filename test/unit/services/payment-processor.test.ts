@@ -117,6 +117,31 @@ describe("payment processor", () => {
     });
   });
 
+  it("keeps recovery from cutting a retry delay short", async () => {
+    const context = build({ steps: ["transient", "ok"] });
+    await context.service.create(input, {
+      clientId: "demo",
+      idempotencyKey: "order-1042-key",
+    });
+    context.queue.jobs.length = 0;
+    await context.processor.process(PAYMENT_ID);
+    const retryAt = context.queue.jobs[0]?.runAt.toISOString();
+    expect(await context.repository.findById(PAYMENT_ID)).toMatchObject({
+      status: "PENDING",
+      nextAttemptAt: retryAt,
+    });
+    context.queue.jobs.length = 0;
+    expect(await context.processor.recover()).toBe(0);
+    expect(context.queue.jobs).toHaveLength(0);
+    context.clock.advance(50);
+    expect(await context.processor.recover()).toBe(1);
+    await context.processor.process(PAYMENT_ID);
+    expect(await context.repository.findById(PAYMENT_ID)).toMatchObject({
+      status: "SUCCEEDED",
+      nextAttemptAt: null,
+    });
+  });
+
   it("fails when transient errors exhaust the attempt budget", async () => {
     const context = build({ steps: ["timeout", "timeout"], maxAttempts: 2 });
     await context.service.create(input, {

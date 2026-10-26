@@ -107,6 +107,10 @@
             "type": "string",
             "nullable": true
           },
+          "nextAttemptAt": {
+            "type": "string",
+            "nullable": true
+          },
           "createdAt": {
             "type": "string"
           },
@@ -129,6 +133,7 @@
           "attempts",
           "version",
           "processingStartedAt",
+          "nextAttemptAt",
           "createdAt",
           "updatedAt"
         ]

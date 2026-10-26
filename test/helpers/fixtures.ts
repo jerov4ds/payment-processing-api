@@ -30,6 +30,7 @@ export function samplePayment(overrides: Partial<Payment> = {}): Payment {
     attempts: 0,
     version: 1,
     processingStartedAt: null,
+    nextAttemptAt: null,
     createdAt: NOW.toISOString(),
     updatedAt: NOW.toISOString(),
     ...overrides,

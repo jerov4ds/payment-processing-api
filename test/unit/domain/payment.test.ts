@@ -225,7 +225,7 @@ describe("payment aggregate", () => {
     expect(refunded.statusReason).toBeNull();
     processing.metadata.orderId = "changed";
     expect(succeeded.metadata.orderId).toBe("1042");
-    expect(() => releaseForRetry(succeeded, NOW)).toThrow(
+    expect(() => releaseForRetry(succeeded, NOW, NOW)).toThrow(
       InvalidTransitionError,
     );
     expect(() => markFailed(samplePayment(), "PAYMENT_DECLINED", NOW)).toThrow(

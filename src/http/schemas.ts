@@ -78,6 +78,7 @@ export const publicPaymentSchema = z
     attempts: z.number().int(),
     version: z.number().int(),
     processingStartedAt: z.string().nullable(),
+    nextAttemptAt: z.string().nullable(),
     createdAt: z.string(),
     updatedAt: z.string(),
   })

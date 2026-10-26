@@ -49,6 +49,8 @@ export interface Payment {
   attempts: number;
   version: number;
   processingStartedAt: string | null;
+  /** When a released retry becomes due. Recovery leaves the payment alone until then. */
+  nextAttemptAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -106,6 +108,7 @@ export function createPayment(input: NewPaymentInput): Payment {
     attempts: 0,
     version: 1,
     processingStartedAt: null,
+    nextAttemptAt: null,
     createdAt: timestamp,
     updatedAt: timestamp,
   };
@@ -137,6 +140,7 @@ export function claimForProcessing(payment: Payment, now: Date): Payment {
     metadata: copyMetadata(payment.metadata),
     version: payment.version + 1,
     processingStartedAt: timestamp,
+    nextAttemptAt: null,
     updatedAt: timestamp,
   };
 }
@@ -186,7 +190,11 @@ export function markFailed(
   };
 }
 
-export function releaseForRetry(payment: Payment, now: Date): Payment {
+export function releaseForRetry(
+  payment: Payment,
+  now: Date,
+  retryAt: Date,
+): Payment {
   assertCanTransition(payment.status, "PENDING");
   return {
     ...payment,
@@ -194,6 +202,7 @@ export function releaseForRetry(payment: Payment, now: Date): Payment {
     metadata: copyMetadata(payment.metadata),
     version: payment.version + 1,
     processingStartedAt: null,
+    nextAttemptAt: retryAt.toISOString(),
     updatedAt: now.toISOString(),
   };
 }

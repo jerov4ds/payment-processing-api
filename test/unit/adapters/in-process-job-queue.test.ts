@@ -34,6 +34,46 @@ describe("in-process job queue", () => {
     expect(drained).toEqual({ drained: true, inflight: 0 });
   });
 
+  it("holds one waiting job per payment and keeps the earliest runAt", async () => {
+    const clock = new FakeClock();
+    const queue = new InProcessJobQueue(clock, 1, () => undefined);
+    const ran: string[] = [];
+    queue.enqueue({
+      paymentId: "a",
+      runAt: new Date(clock.now().getTime() + 500),
+    });
+    queue.enqueue({ paymentId: "a", runAt: clock.now() });
+    queue.enqueue({
+      paymentId: "a",
+      runAt: new Date(clock.now().getTime() + 900),
+    });
+    queue.start(async (paymentId) => {
+      ran.push(paymentId);
+    });
+    await waitFor(() => ran.length === 1);
+    clock.advance(1_000);
+    queue.enqueue({ paymentId: "b", runAt: clock.now() });
+    await waitFor(() => ran.length === 2);
+    expect(ran).toEqual(["a", "b"]);
+    await queue.drain(1000);
+  });
+
+  it("accepts a new job for a payment whose job is running", async () => {
+    const clock = new FakeClock();
+    const queue = new InProcessJobQueue(clock, 2, () => undefined);
+    const ran: string[] = [];
+    queue.start(async (paymentId) => {
+      ran.push(paymentId);
+      if (ran.length === 1) {
+        queue.enqueue({ paymentId, runAt: clock.now() });
+      }
+    });
+    queue.enqueue({ paymentId: "a", runAt: clock.now() });
+    await waitFor(() => ran.length === 2);
+    expect(ran).toEqual(["a", "a"]);
+    await queue.drain(1000);
+  });
+
   it("waits until runAt before starting a delayed job", async () => {
     const clock = new SystemClock();
     const queue = new InProcessJobQueue(clock, 1, () => undefined);

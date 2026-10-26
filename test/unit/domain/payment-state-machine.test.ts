@@ -70,10 +70,13 @@ describe("payment state machine", () => {
       attempts: 1,
       version: 2,
     });
-    const released = releaseForRetry(claimed, NOW);
+    const retryAt = new Date(NOW.getTime() + 100);
+    const released = releaseForRetry(claimed, NOW, retryAt);
     expect(released.status).toBe("PENDING");
     expect(released.processingStartedAt).toBeNull();
+    expect(released.nextAttemptAt).toBe(retryAt.toISOString());
     const again = claimForProcessing(released, NOW);
+    expect(again.nextAttemptAt).toBeNull();
     const succeeded = markSucceeded(again, NOW);
     expect(succeeded.status).toBe("SUCCEEDED");
     const refunded = applyClientTransition(
