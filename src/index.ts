@@ -5,6 +5,7 @@ import { createApp } from "./app";
 import { buildLogger, createContainer } from "./composition/create-container";
 import { loadEnv, type Env } from "./config/env";
 import type { AppLogger } from "./ports/logger";
+import { installCrashHandlers } from "./services/crash-handlers";
 import { gracefulShutdown } from "./services/shutdown";
 
 dotenv.config();
@@ -12,6 +13,9 @@ dotenv.config();
 async function main(): Promise<void> {
   const env = loadConfig();
   const logger = buildLogger(env.logLevel);
+  installCrashHandlers(process, logger, (code) => {
+    exitAfterFlush(logger, code);
+  });
   try {
     await start(env, logger);
   } catch (error) {
