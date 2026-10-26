@@ -66,6 +66,14 @@ const envSchema = z
         message: "must be less than or equal to RETRY_MAX_DELAY_MS",
       });
     }
+    if (value.PROCESSING_LEASE_MS <= value.GATEWAY_TIMEOUT_MS) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["PROCESSING_LEASE_MS"],
+        message:
+          "must be greater than GATEWAY_TIMEOUT_MS, or recovery can reclaim a payment while its charge is still running",
+      });
+    }
     if (value.REPOSITORY_DRIVER === "postgres" && !value.DATABASE_URL) {
       ctx.addIssue({
         code: "custom",

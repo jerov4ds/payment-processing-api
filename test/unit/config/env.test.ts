@@ -73,6 +73,23 @@ describe("loadEnv", () => {
     ).toThrow(/RETRY_BASE_DELAY_MS/);
   });
 
+  it("refuses a processing lease that a gateway call can outlive", () => {
+    expect(() =>
+      loadEnv({
+        ...valid,
+        GATEWAY_TIMEOUT_MS: "2000",
+        PROCESSING_LEASE_MS: "2000",
+      }),
+    ).toThrow(/PROCESSING_LEASE_MS/);
+    expect(
+      loadEnv({
+        ...valid,
+        GATEWAY_TIMEOUT_MS: "2000",
+        PROCESSING_LEASE_MS: "2001",
+      }).processingLeaseMs,
+    ).toBe(2001);
+  });
+
   it("treats empty strings as unset so defaults still apply", () => {
     const env = loadEnv({ ...valid, PORT: "", CORS_ORIGINS: "" });
     expect(env.port).toBe(4317);

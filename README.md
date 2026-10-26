@@ -101,36 +101,36 @@ The API is published on `127.0.0.1:4317` and Postgres on `127.0.0.1:54329`. Comp
 
 ## Environment
 
-| Variable                         | Default                                  | Purpose                                                                          |
-| -------------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------- |
-| `NODE_ENV`                       | `development`                            | Runtime mode. Problem responses never include stacks                             |
-| `HOST`                           | `127.0.0.1`                              | Bind address. Compose sets `0.0.0.0` inside the container                        |
-| `PORT`                           | `4317`                                   | Listen port                                                                      |
-| `LOG_LEVEL`                      | `info`                                   | Pino level                                                                       |
-| `API_KEYS`                       | required                                 | Comma-separated `clientId:secret` pairs. Secrets must be at least 8 characters   |
-| `REPOSITORY_DRIVER`              | `json`                                   | `json`, `postgres`, or `memory`                                                  |
-| `JSON_STORE_PATH`                | `./data/payments.json`                   | JSON store path                                                                  |
-| `DATABASE_URL`                   | unset                                    | Required when the driver is `postgres`                                           |
-| `AUTO_MIGRATE`                   | `true`                                   | Apply `db/migrations/001_init.sql` on startup                                    |
-| `CORS_ORIGINS`                   | empty                                    | Comma-separated browser origins. Empty allows no browser origin                  |
-| `BODY_LIMIT_BYTES`               | `16384`                                  | JSON body limit                                                                  |
-| `RATE_LIMIT_WINDOW_MS`           | `60000`                                  | Rate-limit window                                                                |
-| `RATE_LIMIT_MAX`                 | `100`                                    | API requests per window, per authenticated client                                |
-| `AUTH_FAILURE_RATE_LIMIT_MAX`    | `20`                                     | Failed API key attempts per window, per client address                           |
-| `GATEWAY_MIN_LATENCY_MS`         | `20`                                     | Simulated latency floor                                                          |
-| `GATEWAY_MAX_LATENCY_MS`         | `50`                                     | Simulated latency ceiling                                                        |
-| `GATEWAY_TIMEOUT_MS`             | `2000`                                   | Gateway call timeout                                                             |
-| `GATEWAY_TRANSIENT_FAILURE_RATE` | `0`                                      | Share of attempts that fail transiently. Sum with the permanent rate must be ≤ 1 |
-| `GATEWAY_PERMANENT_FAILURE_RATE` | `0`                                      | Share of attempts that are declined                                              |
-| `GATEWAY_SEED`                   | `1`                                      | Seed for gateway decisions and retry jitter                                      |
-| `PAYMENT_MAX_ATTEMPTS`           | `3`                                      | Gateway attempts before a transient failure becomes `FAILED`                     |
-| `RETRY_BASE_DELAY_MS`            | `50`                                     | Backoff base                                                                     |
-| `RETRY_MAX_DELAY_MS`             | `2000`                                   | Backoff cap                                                                      |
-| `WORKER_CONCURRENCY`             | `5`                                      | In-process worker slots                                                          |
-| `SHUTDOWN_DRAIN_MS`              | `10000`                                  | How long shutdown waits for in-flight jobs                                       |
-| `PROCESSING_LEASE_MS`            | `5000`                                   | How long a `PROCESSING` row is owned by a worker                                 |
-| `RECONCILE_INTERVAL_MS`          | `1000`                                   | How often recoverable rows are re-enqueued                                       |
-| `PROBLEM_BASE_URI`               | `https://payment-service.local/problems` | Prefix for problem `type` URIs                                                   |
+| Variable                         | Default                                  | Purpose                                                                            |
+| -------------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------- |
+| `NODE_ENV`                       | `development`                            | Runtime mode. Problem responses never include stacks                               |
+| `HOST`                           | `127.0.0.1`                              | Bind address. Compose sets `0.0.0.0` inside the container                          |
+| `PORT`                           | `4317`                                   | Listen port                                                                        |
+| `LOG_LEVEL`                      | `info`                                   | Pino level                                                                         |
+| `API_KEYS`                       | required                                 | Comma-separated `clientId:secret` pairs. Secrets must be at least 8 characters     |
+| `REPOSITORY_DRIVER`              | `json`                                   | `json`, `postgres`, or `memory`                                                    |
+| `JSON_STORE_PATH`                | `./data/payments.json`                   | JSON store path                                                                    |
+| `DATABASE_URL`                   | unset                                    | Required when the driver is `postgres`                                             |
+| `AUTO_MIGRATE`                   | `true`                                   | Apply `db/migrations/001_init.sql` on startup                                      |
+| `CORS_ORIGINS`                   | empty                                    | Comma-separated browser origins. Empty allows no browser origin                    |
+| `BODY_LIMIT_BYTES`               | `16384`                                  | JSON body limit                                                                    |
+| `RATE_LIMIT_WINDOW_MS`           | `60000`                                  | Rate-limit window                                                                  |
+| `RATE_LIMIT_MAX`                 | `100`                                    | API requests per window, per authenticated client                                  |
+| `AUTH_FAILURE_RATE_LIMIT_MAX`    | `20`                                     | Failed API key attempts per window, per client address                             |
+| `GATEWAY_MIN_LATENCY_MS`         | `20`                                     | Simulated latency floor                                                            |
+| `GATEWAY_MAX_LATENCY_MS`         | `50`                                     | Simulated latency ceiling                                                          |
+| `GATEWAY_TIMEOUT_MS`             | `2000`                                   | Gateway call timeout                                                               |
+| `GATEWAY_TRANSIENT_FAILURE_RATE` | `0`                                      | Share of attempts that fail transiently. Sum with the permanent rate must be ≤ 1   |
+| `GATEWAY_PERMANENT_FAILURE_RATE` | `0`                                      | Share of attempts that are declined                                                |
+| `GATEWAY_SEED`                   | `1`                                      | Seed for gateway decisions and retry jitter                                        |
+| `PAYMENT_MAX_ATTEMPTS`           | `3`                                      | Gateway attempts before a transient failure becomes `FAILED`                       |
+| `RETRY_BASE_DELAY_MS`            | `50`                                     | Backoff base                                                                       |
+| `RETRY_MAX_DELAY_MS`             | `2000`                                   | Backoff cap                                                                        |
+| `WORKER_CONCURRENCY`             | `5`                                      | In-process worker slots                                                            |
+| `SHUTDOWN_DRAIN_MS`              | `10000`                                  | How long shutdown waits for in-flight jobs                                         |
+| `PROCESSING_LEASE_MS`            | `5000`                                   | How long a `PROCESSING` row is owned by a worker. Must exceed `GATEWAY_TIMEOUT_MS` |
+| `RECONCILE_INTERVAL_MS`          | `1000`                                   | How often recoverable rows are re-enqueued                                         |
+| `PROBLEM_BASE_URI`               | `https://payment-service.local/problems` | Prefix for problem `type` URIs                                                     |
 
 Invalid configuration throws at startup and the process exits before it listens.
 
