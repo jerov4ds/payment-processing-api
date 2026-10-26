@@ -7,10 +7,11 @@ import type { Env } from "./config/env";
 import { RouteNotFoundError } from "./domain/errors";
 import { toProblem } from "./http/problem";
 import { buildOpenApiSpec } from "./openapi/spec";
-import { apiKeyAuth } from "./middleware/auth";
+import { identifyClient, requireClient } from "./middleware/auth";
 import { denyFraming } from "./middleware/frame-guard";
 import { errorHandler } from "./middleware/error-handler";
 import {
+  createAddressRateLimiter,
   createAuthFailureLimiter,
   createClientRateLimiter,
 } from "./middleware/rate-limit";
@@ -68,12 +69,17 @@ export function createApp(deps: AppDependencies): Express {
       maxAge: 600,
     }),
   );
-  app.use("/api", createAuthFailureLimiter(deps.env));
+  app.use(createAddressRateLimiter(deps.env));
+  app.use(
+    "/api",
+    identifyClient(deps.env.apiClients),
+    createAuthFailureLimiter(deps.env),
+    requireClient(),
+    createClientRateLimiter(deps.env),
+  );
   app.use(requireJson);
   app.use(express.json({ limit: deps.env.bodyLimitBytes, strict: true }));
   app.use("/health", healthRouter(deps.repository, deps.readiness));
-  app.use("/api", apiKeyAuth(deps.env.apiClients));
-  app.use("/api", createClientRateLimiter(deps.env));
   app.use("/api/v1", paymentRouter(deps.paymentService));
   app.use(consoleRouter());
   app.use(docsRouter(buildOpenApiSpec()));

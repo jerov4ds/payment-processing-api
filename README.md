@@ -230,7 +230,7 @@ Coverage includes the state machine, idempotency, optimistic locking, gateway ti
 - JSON bodies are size-limited. `POST` and `PATCH` require `application/json`.
 - Unknown fields are stripped before the idempotency hash is computed, so a retry that drops an ignored field still matches. A typo in a field name is therefore ignored rather than rejected.
 - Metadata is at most 20 keys, each matching `^[A-Za-z0-9_.-]{1,64}$`, with string, integer, or boolean values. `__proto__`, `constructor`, and `prototype` are rejected.
-- Rate limiting is in memory and applies to `/api`. Before authentication, an address that sends more than `AUTH_FAILURE_RATE_LIMIT_MAX` bad keys in a window gets 429, whichever keys it tries. After authentication, each client has `RATE_LIMIT_MAX` requests per window. Health probes are exempt. A second instance needs a shared store.
+- Rate limiting is in memory. On `/api`, an address that sends more than `AUTH_FAILURE_RATE_LIMIT_MAX` unverified keys in a window gets 429 for further unverified requests, whichever keys it tries; a valid key from that address still works. Verified clients get `RATE_LIMIT_MAX` requests per window each. Other pages are limited to `RATE_LIMIT_MAX` per address. Health probes are exempt. The key is checked before the body is parsed. Addresses come from the socket; behind a reverse proxy, Express `trust proxy` must be set for them to be the real client. A second instance needs a shared store.
 - Pino redacts `x-api-key`, `authorization`, `idempotency-key`, payment-method tokens, and PAN/CVV field names. Unexpected failures are logged with the error and are not copied into the HTTP body.
 - `npm audit --audit-level=high` is part of CI.
 

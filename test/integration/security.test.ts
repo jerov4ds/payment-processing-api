@@ -100,6 +100,30 @@ describe("HTTP security edge", () => {
       statuses.push(guess.status);
     }
     expect(statuses).toEqual([401, 401, 401, 429, 429]);
+    const stillAllowed = await request(app)
+      .get("/api/v1/payments")
+      .set("X-Api-Key", apiKey);
+    expect(stillAllowed.status).toBe(200);
+  });
+
+  it("rejects a bad key before reading the request body", async () => {
+    const { app } = await createTestApp();
+    const response = await request(app)
+      .post("/api/v1/payments")
+      .set("X-Api-Key", "not-a-real-key")
+      .set("Content-Type", "application/json")
+      .send("{not json");
+    expect(response.status).toBe(401);
+  });
+
+  it("limits pages outside the API by address", async () => {
+    const { app } = await createTestApp({ env: { RATE_LIMIT_MAX: "2" } });
+    const statuses: number[] = [];
+    for (let index = 0; index < 3; index += 1) {
+      statuses.push((await request(app).get("/")).status);
+    }
+    expect(statuses).toEqual([200, 200, 429]);
+    expect((await request(app).get("/health/live")).status).toBe(200);
   });
 
   it("hides another client's payments", async () => {
